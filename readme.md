@@ -20,6 +20,10 @@ To start the pi dashboard run:
 ros2 run dashboard dashboard
 ```
     
-_OPTIONAL: For the camera stream if you have a realsense camera hooked up run `ros2 run dashboard camera`_
+_OPTIONAL: For the camera stream if you have a realsense camera hooked up run:_ 
+
+```bash
+ros2 run dashboard camera
+```
 
 ---
