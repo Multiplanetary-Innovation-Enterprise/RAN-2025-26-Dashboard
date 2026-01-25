@@ -27,3 +27,11 @@ ros2 run dashboard camera
 ```
 
 ---
+
+## Authors
+
+Benji Sutton
+Jacob Earl
+Royce Doll
+
+---
