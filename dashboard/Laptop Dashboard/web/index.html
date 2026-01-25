@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Driver Station</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <!-- Top connection bar -->
+    <connection-bar></connection-bar>
+
+    <!-- Main grid for core cards -->
+    <main class="grid">
+      <video-panel></video-panel>
+      <teleop-panel></teleop-panel>
+      <telemetry-panel></telemetry-panel>
+      <queue-panel></queue-panel>
+    </main>
+
+    <!-- Controller + Rover panels -->
+    <controller-panel></controller-panel>
+    <rover-visual-panel></rover-visual-panel>
+
+    <!-- JS entrypoint: loads components, then your old scripts -->
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

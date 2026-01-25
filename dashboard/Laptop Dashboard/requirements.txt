@@ -1,0 +1,5 @@
+aiohttp
+opencv-python
+pyrealsense2
+numpy
+pygame

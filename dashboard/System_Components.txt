@@ -1,0 +1,122 @@
+Pi runs the 
+WS (Web Socket) client to laptop
+local MJPEG server at http://pi:9002/video.mjpg
+
+┌─────────────┐        WebSocket       ┌──────────────┐         WebSocket      ┌─────────────┐
+│   Browser   │  <──────────────────>  │   Laptop     │  <──────────────────>  │     Pi      │
+│ (Dashboard) │                        │   Server     │                        │ (Onboard)   │
+└─────────────┘                        └──────────────┘                        └─────────────┘
+                                          │
+                                          │ HTTP (MJPEG proxy)
+                                          ▼
+                                     /video.mjpg
+=========================
+1. Browser (Dashboard UI)
+
+    Files involved
+        web/index.html
+        web/app.js
+        web/gamepad.js
+
+    Responsibilities
+        Read user input:
+            Keyboard (W/A/S/D)
+            Xbox controller (Gamepad API)
+
+        Display:
+            Telemetry (IMU, encoders, battery, network)
+            Video stream
+            Queue state and alerts
+
+        Send control messages over WebSocket
+
+    Protocol
+        Connects to:
+        ws://<laptop-ip>:8765/ws
+
+        Sends:
+        { t:"cmd", lx, az } (teleop)
+        { t:"estop" }
+        { t:"queue.drive", ... }
+
+        Receives:
+        { t:"tlm", ... }
+        { t:"queue.state" }
+        { t:"queue.result" }
+        { t:"alert" }
+=========================
+2. Laptop Server (Relay + Proxy)
+Files involved  
+    server/app.py
+
+Responsibilities
+    Acts as a relay, not a controller
+    Hosts:
+        WebSocket endpoint /ws
+        HTTP endpoint /video.mjpg
+
+    Relays messages
+        Browser → Pi (commands)
+        Pi → Browser (telemetry/events)
+
+    Proxies video:
+        Pulls MJPEG stream from Pi
+        Forwards raw bytes to browser
+=========================
+3. Rover Pi (Onboard System)
+Files involved
+    dashboard.py
+    network_handler.py
+    service_center.py
+    services/*
+    camera_service.py
+    video_server.py
+
+Responsibilities
+    Own all hardware:
+        Motors
+        IMU
+        Encoders
+        Battery
+        RealSense camera
+    Apply teleop commands
+    Generate telemetry frames
+    Serve camera stream
+    Maintain autonomy / queue state
+
+Connections
+    WebSocket client to laptop:
+        ws://<laptop-ip>:8765/ws
+
+    HTTP server for video:
+        http://<pi-ip>:9002/video.mjpg
+=========================
+Teleop Command Flow (Keyboard or Gamepad)
+    User Input
+    ↓
+    Browser (app.js / gamepad.js)
+    ↓  WebSocket
+    Laptop Server (app.py)
+    ↓  WebSocket
+    Pi (NetworkHandler → ServiceCenter → DriveService)
+=========================
+Telemetry Flow
+    Pi Services (IMU / Enc / Bat / Queue)
+    ↓
+    ServiceCenter.build_telemetry_frame()
+    ↓  WebSocket
+    Laptop Server (relay)
+    ↓  WebSocket
+    Browser (UI rendering)
+=========================
+Video Flow (MJPEG Proxy)
+    RealSense Camera (Pi)
+    ↓
+    camera_service.py
+    ↓
+    video_server.py  (HTTP MJPEG)
+    ↓
+    Laptop app.py  (byte-for-byte proxy)
+    ↓
+    Browser <img src="/video.mjpg">
+=========================
