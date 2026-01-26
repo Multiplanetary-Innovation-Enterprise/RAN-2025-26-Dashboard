@@ -6,6 +6,42 @@
 
 ---
 
+## Workspace Layout
+
+<pre>
+RAN-2025-26-Dashboard/
+├── Laptop Dashboard
+│   ├── README.md
+│   ├── requirements.txt
+│   ├── run_dashboard.ps1
+│   ├── server
+│   │   ├── app.py
+│   │   ├── laptop_teleop_client.py
+│   │   └── __pycache__
+│   │       ├── realsense_source.cpython-313.pyc
+│   │       └── telemetry_source.cpython-313.pyc
+│   ├── start_dashboard.py
+│   ├── web
+│   │   ├── app.js
+│   │   ├── components
+│   │   │   ├── connection-bar.js
+│   │   │   ├── controller-panel.js
+│   │   │   ├── queue-panel.js
+│   │   │   ├── rover-visual-panel.js
+│   │   │   ├── telemetry-panel.js
+│   │   │   ├── teleop-panel.js
+│   │   │   └── video-panel.js
+│   │   ├── example.png
+│   │   ├── gamepad.js
+│   │   ├── index.html
+│   │   ├── main.js
+│   │   └── style.css
+│   └── wire_protocol.txt
+└── readme.md
+<pre/>
+
+---
+
 ## Running the System
 
 To start the web server run:
