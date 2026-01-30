@@ -16,10 +16,10 @@ It is designed for low-latency teleoperation, clear system visibility, and robus
 
 <pre>
 ┌────────────┐     WebSocket (/ws)          ┌──────────────┐
-│ Browser    │ ◀────────────────────────▶   │    Laptop    │
+│ Browser    │ ◀────────────────────────▶  │    Laptop    │
 │ Dashboard  │                              │    Driver    │
 │ (UI + JS)  │     HTTP (/video.mjpg)       │    Station   |
-└────────────┘ ◀────────────────────────▶   │    Server    │
+└────────────┘ ◀────────────────────────▶  │    Server    │
                                             │   (app.py)   │
                                             └──────▲───────┘
                                                    │ WS
