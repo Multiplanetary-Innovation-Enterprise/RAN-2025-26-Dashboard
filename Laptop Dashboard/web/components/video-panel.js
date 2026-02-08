@@ -12,7 +12,7 @@ class VideoPanel extends HTMLElement {
     this.innerHTML = `
       <h3>Video</h3>
       <!-- Video Stream -->
-      <img id="cam" src="http://192.168.1.236:9002/video.mjpg" alt="camera stream"
+      <img id="cam" src="http://192.168.1.50:9002/video.mjpg" alt="camera stream"
            style="width: 300px; height: 240px; background: black;">
       <div class="row">
         <label>Preset:

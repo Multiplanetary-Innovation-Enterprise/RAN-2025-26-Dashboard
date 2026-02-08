@@ -7,6 +7,7 @@ import './components/telemetry-panel.js';
 import './components/queue-panel.js';
 import './components/controller-panel.js';
 import './components/rover-visual-panel.js';
+import './components/bandwidth-panel.js';
 
 import './app.js';
 import './gamepad.js';

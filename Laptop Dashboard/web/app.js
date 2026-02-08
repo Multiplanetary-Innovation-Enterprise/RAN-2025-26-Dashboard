@@ -156,7 +156,23 @@ function handleServerMessage(m) {
     if (m.imu && m.imu.rpy) $("#imuRpy").textContent = m.imu.rpy.map(v => v.toFixed(2)).join(", ");
     if (m.enc) $("#encRps").textContent = `${(m.enc.l_rps ?? 0).toFixed(2)} / ${(m.enc.r_rps ?? 0).toFixed(2)}`;
     if (m.bat) $("#battery").textContent = `${(m.bat.v ?? 0).toFixed(2)} V, ${(m.bat.i ?? 0).toFixed(2)} A`;
-    if (m.net)  $("#netKbps").textContent = `${m.net.ctl_kbps ?? 0} | ${m.net.tlm_kbps ?? 0} | ${m.net.vid_kbps ?? 0}`;
+    if (m.net) {
+      const ctl = m.net.ctl_kbps ?? 0;
+      const tlm = m.net.tlm_kbps ?? 0;
+      const vid = m.net.vid_kbps ?? 0;
+
+      $("#netKbps").textContent = `${ctl} | ${tlm} | ${vid}`;
+      
+      // create bandwidth event for bandwidth-panel.js
+      const rx_mb_s = (tlm + vid) / 1024;
+      const tx_mb_s = ctl / 1024;
+
+      window.dispatchEvent(
+        new CustomEvent("bandwidth", { 
+          detail: { rx_mb_s, tx_mb_s }
+        })
+      );
+    }
     if (m.wheel_cmd) {
       const panel = document.querySelector("rover-visual-panel");
       if (panel) panel.updateWheelAnimation(m.wheel_cmd);
