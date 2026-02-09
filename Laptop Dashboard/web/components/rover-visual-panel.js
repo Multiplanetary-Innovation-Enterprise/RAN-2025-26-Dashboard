@@ -4,7 +4,8 @@ class RoverVisualPanel extends HTMLElement {
     if (this._rendered) return;
     this._rendered = true;
 
-    this.classList.add('panel');
+    this.classList.add('card');
+    this.id = this.id || 'roverVisualSection';
 
     this.innerHTML = `
       <h2>Rover Drive Visualization</h2>

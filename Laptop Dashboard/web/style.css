@@ -2,8 +2,10 @@ body { font-family: system-ui, sans-serif; margin: 0; background: #0b0d12; color
 .bar { display:flex; gap:1rem; align-items:center; padding:0.75rem 1rem; background:#141826; border-bottom:1px solid #242a3b; }
 button { padding:0.5rem 0.9rem; border-radius:8px; border:1px solid #39415a; background:#1b2133; color:#e7e9ee; cursor:pointer; }
 button.danger { background:#4a1620; border-color:#7a2333; }
-.grid { display:grid; gap:1rem; padding:1rem; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.bottom-row { display:grid; gap:1rem; padding:1rem; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.top-row { display:grid; gap:1rem; padding:1rem; grid-template-columns: 3fr 2fr 1fr; }
 .card { background:#121623; border:1px solid #242a3b; border-radius:12px; padding:1rem; }
+.dashboard-layout { display:grid; grid-template-rows: 2fr 1fr; height: 100%;}
 .row { display:flex; gap:1rem; align-items:center; flex-wrap:wrap; }
 .note { color:#9aa3bc; font-size:0.9rem; }
 video { width:100%; max-height:360px; background:#000; border-radius:8px; }
@@ -33,6 +35,23 @@ body {
 .panel h2 {
   margin-top: 0;
   font-size: 1.2rem;
+}
+
+.arena-container {
+  display: flex;
+  flex: 1;
+}
+
+.arena-placeholder {
+  flex: 1;
+  border: 1px dashed #222842;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7c82a5;
+  font-size: 0.9rem;
+  min-height: 240px;
 }
 
 /* Controller panel */
