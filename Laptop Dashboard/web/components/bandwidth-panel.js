@@ -8,7 +8,7 @@ class BandwidthPanel extends HTMLElement {
     this.id = this.id || 'bandwidthSecton';
 
     this.innerHTML = `
-        <h3>Bandwidth Utilization (MB/s)</h3>
+        <h3>Bandwidth Utilization (Mbps)</h3>
         <div class="bandwidth-chart-wrap">
           <canvas></canvas>
         </div>

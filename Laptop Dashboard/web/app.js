@@ -164,8 +164,8 @@ function handleServerMessage(m) {
       $("#netKbps").textContent = `${ctl} | ${tlm} | ${vid}`;
       
       // create bandwidth event for bandwidth-panel.js
-      const rx_mb_s = (tlm + vid) / 1024;
-      const tx_mb_s = ctl / 1024;
+      const rx_mb_s = (tlm + vid) / 1000;  // convert kbps to Mbps (Megabits per second)
+      const tx_mb_s = ctl / 1000;          // convert kbps to Mbps (Megabits per second)
 
       window.dispatchEvent(
         new CustomEvent("bandwidth", { 
