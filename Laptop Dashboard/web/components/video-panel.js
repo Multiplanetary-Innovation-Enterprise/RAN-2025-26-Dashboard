@@ -22,7 +22,7 @@ class VideoPanel extends HTMLElement {
         return new Promise((resolve) => {
             if (window.JMuxer) return resolve();
             const script = document.createElement('script');
-            script.src = "https://cdn.jsdelivr.net/npm/jmuxer@2.1.0/dist/jmuxer.min.js";
+            script.src = "./components/jmuxer.js";
             script.onload = resolve;
             document.head.appendChild(script);
         });
