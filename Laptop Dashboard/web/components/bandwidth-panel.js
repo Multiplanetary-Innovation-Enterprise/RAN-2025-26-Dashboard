@@ -50,7 +50,7 @@ class BandwidthPanel extends HTMLElement {
         scales: {
           y: {
             min: 0,
-            max: 1,
+            max: 5,
             title: {
               display: true,
               text: "MB/s"
