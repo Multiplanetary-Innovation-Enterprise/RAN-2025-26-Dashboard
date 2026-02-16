@@ -157,19 +157,30 @@ function handleServerMessage(m) {
     if (m.enc) $("#encRps").textContent = `${(m.enc.l_rps ?? 0).toFixed(2)} / ${(m.enc.r_rps ?? 0).toFixed(2)}`;
     if (m.bat) $("#battery").textContent = `${(m.bat.v ?? 0).toFixed(2)} V, ${(m.bat.i ?? 0).toFixed(2)} A`;
     if (m.net) {
+      // Instantaneous kbps values
       const ctl = m.net.ctl_kbps ?? 0;
       const tlm = m.net.tlm_kbps ?? 0;
       const vid = m.net.vid_kbps ?? 0;
 
-      $("#netKbps").textContent = `${ctl} | ${tlm} | ${vid}`;
+      // Rolling averages
+      const ctl_avg = m.net.ctl_kbps_avg ?? 0;
+      const tlm_avg = m.net.tlm_kbps_avg ?? 0;
+      const vid_avg = m.net.vid_kbps_avg ?? 0;
+
+      $("#netKbps").textContent = `${ctl} | ${tlm} | ${vid} (avg: ${ctl_avg} | ${tlm_avg} | ${vid_avg})`;
       
       // create bandwidth event for bandwidth-panel.js
+      // Instantaneous
       const rx_mb_s = (tlm + vid) / 1000;  // convert kbps to Mbps (Megabits per second)
       const tx_mb_s = ctl / 1000;          // convert kbps to Mbps (Megabits per second)
 
+      // Rolling average
+      const rx_mb_s_avg = (tlm_avg + vid_avg) / 1000;  // convert kbps to Mbps (Megabits per second)
+      const tx_mb_s_avg = ctl_avg / 1000;              // convert kbps to Mbps (Megabits per second)
+
       window.dispatchEvent(
         new CustomEvent("bandwidth", { 
-          detail: { rx_mb_s, tx_mb_s }
+          detail: { rx_mb_s, tx_mb_s, rx_mb_s_avg, tx_mb_s_avg }
         })
       );
     }
