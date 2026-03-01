@@ -6,8 +6,14 @@
       4) Provide buttons for e-stop + queue commands
     We keep names explicit and un-abstracted on purpose.
 */
+import { flWheel } from "./wheel_cards/fl_telemetry.js";
+import { frWheel } from "./wheel_cards/fr_telemetry.js";
+import { rlWheel } from "./wheel_cards/rl_telemetry.js";
+import { rrWheel } from "./wheel_cards/rr_telemetry.js";
+
 let ws = null;
 let isConnected = false;
+let latestFaults = null;
 let lastCmdSentMs = 0;
 let teleop_lx = 0.0;                // linear x (m/s)
 let teleop_az = 0.0;                // angular z (rad/s)
@@ -34,6 +40,30 @@ let DPAD_RIGHT = 0.0;
 let HOME = 0.0;
 const CMD_PERIOD_MS = 50;           // 20 Hz cap
 const HEARTBEAT_PERIOD_MS = 200;
+const WHEEL_STATE_POLL_MS = 100;    // 10 Hz
+const FAULT_POLL_MS = 500;          // 2 Hz
+
+const FAULT_LIST = [
+  "brownout",
+  "over_current",
+  "over_voltage",
+  "under_voltage",
+  "hardware_failure",
+  "device_temp",
+  "processor_temp",
+  "supply_over_current",
+  "stator_over_current",
+
+  "sticky_brownout",
+  "sticky_over_current",
+  "sticky_over_voltage",
+  "sticky_under_voltage",
+  "sticky_hardware_failure",
+  "sticky_device_temp",
+  "sticky_processor_temp",
+  "sticky_supply_over_current",
+  "sticky_stator_over_current",
+];
 
 // Allow other scripts (gamepad.js) to set teleop targets cleanly.
 window.DS_setTeleop = function(lx, az, lt2, rt2) {
@@ -83,6 +113,7 @@ function connectWebSocket() {
     isConnected = true;
     setConnStatus("connected");
     sendJson({ t:"set", telemetry_hz: 10 });        // Ask for 10 Hz telemetry by default
+    telemetryPollLoop();  // Start telemetry polling loop on connect
   };
   ws.onclose = () => {
     isConnected = false;
@@ -90,6 +121,7 @@ function connectWebSocket() {
   };
   ws.onmessage = (evt) => {
     const m = JSON.parse(evt.data);
+    console.log("WS message received:", m);
     handleServerMessage(m);
   };
 }
@@ -103,6 +135,19 @@ function sendJson(obj) {
 function heartbeatLoop() {
   if (isConnected) sendJson({ t:"hb" });
   setTimeout(heartbeatLoop, HEARTBEAT_PERIOD_MS);
+}
+
+function telemetryPollLoop() {
+  if (isConnected) {
+    console.log("Sending svc requests...");
+    // wheel telemetry
+    sendJson({ t: "svc", name: "wheel_state.poll" });
+
+    // fault telemetry
+    sendJson({ t: "svc", name: "faults.poll" });
+  }
+
+  setTimeout(telemetryPollLoop, WHEEL_STATE_POLL_MS);
 }
 
 function cmdLoop() {
@@ -151,6 +196,14 @@ function handleServerMessage(m) {
   if (m.t === "hello") {
     // server greeting with version
   } 
+  else if (m.t === "svc.reply") {
+    if (m.name === "wheel_state.poll") {
+      handleWheelState(m.data);
+    }
+    else if (m.name === "faults.poll") {
+      handleFaults(m.data);
+    }
+  }
   else if (m.t === "tlm") {
     if (m.mux) setOwner(m.mux);
     if (m.imu && m.imu.rpy) $("#imuRpy").textContent = m.imu.rpy.map(v => v.toFixed(2)).join(", ");
@@ -200,6 +253,97 @@ function handleServerMessage(m) {
   }
 }
 
+function handleWheelState(data) {
+  if (!data || !data.wheel_state) return;
+  const ws = data.wheel_state;
+
+  flWheel.update({
+    rps: ws.fl_rps,
+    cmd_rps: ws.fl_cmd_rps,
+    current: ws.fl_current,
+    temp: ws.fl_temp,
+    fault: latestFaults?.fl?.fault
+  });
+
+  frWheel.update({
+    rps: ws.fr_rps,
+    cmd_rps: ws.fr_cmd_rps,
+    current: ws.fr_current,
+    temp: ws.fr_temp,
+    fault: latestFaults?.fr?.fault
+  });
+
+  rlWheel.update({
+    rps: ws.rl_rps,
+    cmd_rps: ws.rl_cmd_rps,
+    current: ws.rl_current,
+    temp: ws.rl_temp,
+    fault: latestFaults?.rl?.fault
+  });
+
+  rrWheel.update({
+    rps: ws.rr_rps,
+    cmd_rps: ws.rr_cmd_rps,
+    current: ws.rr_current,
+    temp: ws.rr_temp,
+    fault: latestFaults?.rr?.fault
+  });
+}
+
+function handleFaults(data) {
+  if (!data || !data.kraken_faults) return;
+
+  latestFaults = data.kraken_faults;
+
+  updateWheelFaultSummary(latestFaults);
+  updateFaultTable(latestFaults);
+}
+
+function buildFaultLookupTable() {
+  const table = document.querySelector("#fault_table_body");
+  if (!table) return;
+
+  table.innerHTML = "";
+
+  ["fl", "fr", "rl", "rr"].forEach(motor => {
+    FAULT_LIST.forEach(fault => {
+      const tr = document.createElement("tr");
+      tr.dataset.motor = motor;
+      tr.dataset.fault = fault;
+
+      tr.innerHTML = `
+        <td>${motor.toUpperCase()}</td>
+        <td>${fault.replace(/_/g, " ")}</td>
+        <td class="fault-cell unknown">—</td>
+      `;
+
+      table.appendChild(tr);
+    });
+  });
+}
+
+function updateFaultTable(faults) {
+  if (!faults) return;
+
+  ["fl", "fr", "rl", "rr"].forEach(motor => {
+    const m = faults[motor];
+    if (!m || !m.bits) return;
+
+    FAULT_LIST.forEach(fault => {
+      const row = document.querySelector(
+        `tr[data-motor="${motor}"][data-fault="${fault}"]`
+      );
+      if (!row) return;
+
+      const cell = row.querySelector(".fault-cell");
+      const active = !!m.bits[fault];
+
+      cell.textContent = active ? "FAULT" : "OK";
+      cell.className = `fault-cell ${active ? "fault-active" : "fault-ok"}`;
+    });
+  });
+}
+
 /* Keyboard teleop: W/S forward/back, A/D left/right. */
 function bindKeyboardTeleop() {
   const pressed = new Set();
@@ -234,6 +378,7 @@ function bindButtons() {
 
 // Main entry point
 function main() {
+  buildFaultLookupTable();
   bindKeyboardTeleop();
   bindButtons();
   heartbeatLoop();
