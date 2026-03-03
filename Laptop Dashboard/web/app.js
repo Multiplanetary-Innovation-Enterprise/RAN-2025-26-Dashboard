@@ -196,19 +196,12 @@ function handleServerMessage(m) {
   if (m.t === "hello") {
     // server greeting with version
   } 
-  else if (m.t === "svc.reply") {
-    if (m.name === "wheel_state.poll") {
-      handleWheelState(m.data);
-    }
-    else if (m.name === "faults.poll") {
-      handleFaults(m.data);
-    }
-  }
   else if (m.t === "tlm") {
     if (m.mux) setOwner(m.mux);
     if (m.imu && m.imu.rpy) $("#imuRpy").textContent = m.imu.rpy.map(v => v.toFixed(2)).join(", ");
     if (m.enc) $("#encRps").textContent = `${(m.enc.l_rps ?? 0).toFixed(2)} / ${(m.enc.r_rps ?? 0).toFixed(2)}`;
     if (m.bat) $("#battery").textContent = `${(m.bat.v ?? 0).toFixed(2)} V, ${(m.bat.i ?? 0).toFixed(2)} A`;
+    if (m.faults) handleFaults(m);
     if (m.net) {
       // Instantaneous kbps values
       const ctl = m.net.ctl_kbps ?? 0;
@@ -291,9 +284,9 @@ function handleWheelState(data) {
 }
 
 function handleFaults(data) {
-  if (!data || !data.kraken_faults) return;
+  if (!data || !data.faults) return;
 
-  latestFaults = data.kraken_faults;
+  latestFaults = data.faults;
 
   updateWheelFaultSummary(latestFaults);
   updateFaultTable(latestFaults);
