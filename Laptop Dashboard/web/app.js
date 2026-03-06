@@ -212,7 +212,10 @@ function handleServerMessage(m) {
       console.log("TLM faults received:", m.faults);
       handleFaults(m.faults)
     }
-    
+    if (m.wheel_state) {
+      console.log("TLM wheel_state received:", m.wheel_state);
+      handleWheelState(m.wheel_state);
+    }
     if (m.net) {
       // Instantaneous kbps values
       const ctl = m.net.ctl_kbps ?? 0;
@@ -258,8 +261,35 @@ function handleServerMessage(m) {
 }
 
 function handleWheelState(data) {
+  if (!data) return;
+
   const ws = data?.wheel_state ?? data;
   if (!ws) return;
+
+  updateWheelCard("fl", flWheel, ws.fl);
+  updateWheelCard("fr", frWheel, ws.fr);
+  updateWheelCard("rl", rlWheel, ws.rl);
+  updateWheelCard("rr", rrWheel, ws.rr);
+}
+
+function updateWheelCard(name, card, wheelData) {
+  if (!card || !wheelData) return;
+
+  const fault = latestFaults?.[name];
+
+  let fault_state = "ok";
+
+  if (!fault || fault.connected === false) {
+    fault_state = "disconnected";
+  } 
+  else if (fault.fault === true) {
+    fault_state = "fault";
+  }
+
+  card.update({
+    ...wheelData,
+    fault_state
+  });
 }
 
 function handleFaults(data) {

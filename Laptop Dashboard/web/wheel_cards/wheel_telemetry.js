@@ -14,25 +14,35 @@ export function createWheelTelemetryCard(rootId) {
   };
 
   function update(data) {
-    if (!data) return;
+  if (!data) return;
 
-    if (el.rps && data.rps != null)
-      el.rps.textContent = data.rps.toFixed(2);
+  if (el.rps)
+    el.rps.textContent = (data.measured_rps ?? 0).toFixed(2);
 
-    if (el.cmd && data.cmd_rps != null)
-      el.cmd.textContent = data.cmd_rps.toFixed(2);
+  if (el.cmd)
+    el.cmd.textContent = (data.commanded_rps ?? 0).toFixed(2);
 
-    if (el.current && data.current != null)
-      el.current.textContent = data.current.toFixed(1);
+  if (el.current)
+    el.current.textContent = (data.current ?? 0).toFixed(1);
 
-    if (el.temp && data.temp != null)
-      el.temp.textContent = data.temp.toFixed(1);
+  if (el.temp)
+    el.temp.textContent = (data.temp ?? 0).toFixed(1);
 
-    if (el.fault && data.fault != null) {
-      el.fault.textContent = data.fault ? "FAULT" : "OK";
-      el.fault.className = `fault ${data.fault ? "fault" : "ok"}`;
+  if (el.fault) {
+    if (data.fault_state === "disconnected") {
+      el.fault.textContent = "NOT CONNECTED";
+      el.fault.className = "fault fault-disconnected";
+    }
+    else if (data.fault_state === "fault") {
+      el.fault.textContent = "FAULT";
+      el.fault.className = "fault fault-active";
+    }
+    else {
+      el.fault.textContent = "OK";
+      el.fault.className = "fault fault-ok";
     }
   }
+}
 
   return { update };
 }
