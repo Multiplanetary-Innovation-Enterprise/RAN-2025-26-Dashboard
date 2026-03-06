@@ -41,7 +41,8 @@ let HOME = 0.0;
 const CMD_PERIOD_MS = 50;           // 20 Hz cap
 const HEARTBEAT_PERIOD_MS = 200;
 const WHEEL_STATE_POLL_MS = 100;    // 10 Hz
-const FAULT_POLL_MS = 500;          // 2 Hz
+const FAULT_POLL_MS = 1000;         // 1 Hz
+let lastFaultPoll = 0;
 
 const FAULT_LIST = [
   "brownout",
@@ -138,13 +139,19 @@ function heartbeatLoop() {
 }
 
 function telemetryPollLoop() {
+  const now = performance.now();
+
   if (isConnected) {
     console.log("Sending svc requests...");
-    // wheel telemetry
+
+    // wheel telemetry (10 Hz)
     sendJson({ t: "svc", name: "wheel_state.poll" });
 
-    // fault telemetry
-    sendJson({ t: "svc", name: "faults.poll" });
+    // fault telemetry (1 Hz)
+    if (now - lastFaultPoll >= FAULT_POLL_MS) {
+      sendJson({ t: "svc", name: "faults.poll" });
+      lastFaultPoll = now;
+    }
   }
 
   setTimeout(telemetryPollLoop, WHEEL_STATE_POLL_MS);
@@ -201,7 +208,11 @@ function handleServerMessage(m) {
     if (m.imu && m.imu.rpy) $("#imuRpy").textContent = m.imu.rpy.map(v => v.toFixed(2)).join(", ");
     if (m.enc) $("#encRps").textContent = `${(m.enc.l_rps ?? 0).toFixed(2)} / ${(m.enc.r_rps ?? 0).toFixed(2)}`;
     if (m.bat) $("#battery").textContent = `${(m.bat.v ?? 0).toFixed(2)} V, ${(m.bat.i ?? 0).toFixed(2)} A`;
-    if (m.faults) handleFaults(m);
+    if (m.faults) {
+      console.log("TLM faults received:", m.faults);
+      handleFaults(m.faults)
+    }
+    
     if (m.net) {
       // Instantaneous kbps values
       const ctl = m.net.ctl_kbps ?? 0;
@@ -247,48 +258,17 @@ function handleServerMessage(m) {
 }
 
 function handleWheelState(data) {
-  if (!data || !data.wheel_state) return;
-  const ws = data.wheel_state;
-
-  flWheel.update({
-    rps: ws.fl_rps,
-    cmd_rps: ws.fl_cmd_rps,
-    current: ws.fl_current,
-    temp: ws.fl_temp,
-    fault: latestFaults?.fl?.fault
-  });
-
-  frWheel.update({
-    rps: ws.fr_rps,
-    cmd_rps: ws.fr_cmd_rps,
-    current: ws.fr_current,
-    temp: ws.fr_temp,
-    fault: latestFaults?.fr?.fault
-  });
-
-  rlWheel.update({
-    rps: ws.rl_rps,
-    cmd_rps: ws.rl_cmd_rps,
-    current: ws.rl_current,
-    temp: ws.rl_temp,
-    fault: latestFaults?.rl?.fault
-  });
-
-  rrWheel.update({
-    rps: ws.rr_rps,
-    cmd_rps: ws.rr_cmd_rps,
-    current: ws.rr_current,
-    temp: ws.rr_temp,
-    fault: latestFaults?.rr?.fault
-  });
+  const ws = data?.wheel_state ?? data;
+  if (!ws) return;
 }
 
 function handleFaults(data) {
-  if (!data || !data.faults) return;
+  if (!data) return;
 
-  latestFaults = data.faults;
+  const faults = data.kraken_faults ?? data;
+  if (!faults) return;
 
-  updateWheelFaultSummary(latestFaults);
+  latestFaults = faults;
   updateFaultTable(latestFaults);
 }
 
@@ -320,7 +300,7 @@ function updateFaultTable(faults) {
 
   ["fl", "fr", "rl", "rr"].forEach(motor => {
     const m = faults[motor];
-    if (!m || !m.bits) return;
+    if (!m) return;
 
     FAULT_LIST.forEach(fault => {
       const row = document.querySelector(
@@ -329,7 +309,17 @@ function updateFaultTable(faults) {
       if (!row) return;
 
       const cell = row.querySelector(".fault-cell");
-      const active = !!m.bits[fault];
+      if (!cell) return;
+
+      // Motor not connected
+      if (!m.connected) {
+        cell.textContent = "NOT CONNECTED";
+        cell.className = "fault-cell fault-disconnected";
+        return;
+      }
+
+      // Normal fault check
+      const active = !!(m.bits && m.bits[fault]);
 
       cell.textContent = active ? "FAULT" : "OK";
       cell.className = `fault-cell ${active ? "fault-active" : "fault-ok"}`;
