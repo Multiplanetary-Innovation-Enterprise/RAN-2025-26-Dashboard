@@ -239,3 +239,57 @@ body {
   margin-top: 0.5rem;
   color: #7c82a5;
 }
+
+/* Wheel telemetry row */
+.wheel-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.wheel-card {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+.wheel-card h3 {
+  margin: 0 0 6px 0;
+  font-size: 0.95rem;
+  text-align: center;
+  border-bottom: 1px solid #333;
+  padding-bottom: 4px;
+}
+
+/* Fault table */
+.fault-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.fault-table th,
+.fault-table td {
+  border: 1px solid #333;
+  padding: 4px 6px;
+  text-align: left;
+}
+
+.fault-cell.ok,
+.fault-ok {
+  color: #4caf50;
+  font-weight: bold;
+}
+
+.fault-cell.fault-active,
+.fault-active {
+  color: #ff5252;
+  font-weight: bold;
+}
+
+.fault-cell.unknown {
+  color: #777;
+}

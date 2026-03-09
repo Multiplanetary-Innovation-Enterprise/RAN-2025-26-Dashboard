@@ -26,6 +26,59 @@
     </main>
   </div>
 
+  <div class="wheel-row">
+    <div id="wheel_fl" class="wheel-card">
+      <h3>Front Left</h3>
+      <div>RPS: <span class="rps">—</span></div>
+      <div>Cmd: <span class="cmd">—</span></div>
+      <div>Current: <span class="current">—</span></div>
+      <div>Temp: <span class="temp">—</span></div>
+      <div>Status: <span class="fault">—</span></div>
+    </div>
+
+    <div id="wheel_fr" class="wheel-card">
+      <h3>Front Right</h3>
+      <div>RPS: <span class="rps">—</span></div>
+      <div>Cmd: <span class="cmd">—</span></div>
+      <div>Current: <span class="current">—</span></div>
+      <div>Temp: <span class="temp">—</span></div>
+      <div>Status: <span class="fault">—</span></div>
+    </div>
+
+    <div id="wheel_rl" class="wheel-card">
+      <h3>Rear Left</h3>
+      <div>RPS: <span class="rps">—</span></div>
+      <div>Cmd: <span class="cmd">—</span></div>
+      <div>Current: <span class="current">—</span></div>
+      <div>Temp: <span class="temp">—</span></div>
+      <div>Status: <span class="fault">—</span></div>
+    </div>
+
+    <div id="wheel_rr" class="wheel-card">
+      <h3>Rear Right</h3>
+      <div>RPS: <span class="rps">—</span></div>
+      <div>Cmd: <span class="cmd">—</span></div>
+      <div>Current: <span class="current">—</span></div>
+      <div>Temp: <span class="temp">—</span></div>
+      <div>Status: <span class="fault">—</span></div>
+    </div>
+  </div>
+
+  <div class="faults-panel">
+  <h3>Kraken Fault Lookup</h3>
+
+  <table class="fault-table">
+    <thead>
+      <tr>
+        <th>Motor</th>
+        <th>Fault</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="fault_table_body"></tbody>
+  </table>
+</div>
+
     <!-- Controller + Rover panels -->
     <controller-panel></controller-panel>
     <!-- rover-visual-panel></rover-visual-panel -->
