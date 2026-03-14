@@ -1,6 +1,6 @@
 // --- Config ---
-const MAX_CONTROLLERS = 1;
-const MAX_STEER_DEG = 30; // +/- degrees for front wheel steering
+// const MAX_CONTROLLERS = 1;
+// const MAX_STEER_DEG = 30; // +/- degrees for front wheel steering
 
 // Xbox button mapping (standard Gamepad layout)
 const XBOX_BUTTONS = [
@@ -93,7 +93,7 @@ function update() {
 
       updateButtons(gp, controllerState);
       updateSticksAndText(gp);
-      updateRoverFromGamepad(gp);
+      //updateRoverFromGamepad(gp);
     }
 
   requestAnimationFrame(update);
@@ -119,7 +119,7 @@ function resetController0Visuals() {
   if (pressedSummaryEl) {
     pressedSummaryEl.textContent = "No input yet…";
   }
-  updateRoverFromGamepad(null);
+  // updateRoverFromGamepad(null);
 }
 
 // Update button meta + highlight
@@ -200,113 +200,113 @@ function updateSticksAndText(gp) {
 }
 
 // Update rover wheels & throttle from left stick
-function updateRoverFromGamepad(gp) {
-  if (!gp) {
+//function updateRoverFromGamepad(gp) {
+  //if (!gp) {
     // Neutral
-    setWheelSteer(0);
-    setThrottle(0);
-    if (typeof window.DS_setTeleop === "function") {
+    //setWheelSteer(0);
+    //setThrottle(0);
+    //if (typeof window.DS_setTeleop === "function") {
       //window.DS_setTeleop(0.0, 0.0);
-      window.DS_setTeleop(0.0, 0.0, 0.0, 0.0);
-    }
+      //window.DS_setTeleop(0.0, 0.0, 0.0, 0.0);
+    //}
 
-    return;
-  }
-  window.updateButtons(gp);
+    //return;
+  //}
+  //window.updateButtons(gp);
   //Left Stick
-  const lx = gp.axes[0] || 0;
-  const ly = gp.axes[1] || 0;
+  //const lx = gp.axes[0] || 0;
+  //const ly = gp.axes[1] || 0;
   //Right Stick
   //const rx = gp.axes[2] || 0;
   //const ry = gp.axes[3] || 0;
   //Triggers
-  const lt = gp.buttons[6].value || 0;
-  const rt = gp.buttons[7].value || 0;
+  //const lt = gp.buttons[6].value || 0;
+  //const rt = gp.buttons[7].value || 0;
 
   // In most gamepad layouts: up = -1, down = +1
-  const throttleRaw = -ly; // so up stick = forward
-  const steerRaw = lx;
+  //const throttleRaw = -ly; // so up stick = forward
+  //const steerRaw = lx;
 
   // Drive the rover using the same teleop variables app.js already sends (cmdLoop).
-  if (typeof window.DS_setTeleop === "function") {
+  //if (typeof window.DS_setTeleop === "function") {
     // Match keyboard scaling in app.js: 0.5 m/s max, 1.0 rad/s max
-    const cmd_lx = 1 * throttleRaw;
-    const cmd_az = 1.0 * steerRaw;
+    //const cmd_lx = 1 * throttleRaw;
+    //const cmd_az = 1.0 * steerRaw;
     //window.DS_setTeleop(cmd_lx, cmd_az);
-    window.DS_setTeleop(cmd_lx,
-                        cmd_az,
-                        gp.axes[2] || 0.0,     // rx
-                        gp.axes[3] || 0.0,     // ry
-                        rt,
-                        lt,
-                        gp.buttons[0].pressed ? 1 : 0,   // A
-                        gp.buttons[1].pressed ? 1 : 0,   // B
-                        gp.buttons[2].pressed ? 1 : 0,   // X
-                        gp.buttons[3].pressed ? 1 : 0,   // Y
-                        gp.buttons[4].pressed ? 1 : 0,   // LB
-                        gp.buttons[5].pressed ? 1 : 0,   // RB
-                        gp.buttons[8].pressed ? 1 : 0,   // BACK
-                        gp.buttons[9].pressed ? 1 : 0,   // START
-                        gp.buttons[10].pressed ? 1 : 0,  // LCLICK
-                        gp.buttons[11].pressed ? 1 : 0,  // RCLICK
-                        gp.buttons[12].pressed ? 1 : 0,  // DUP
-                        gp.buttons[13].pressed ? 1 : 0,  // DDOWN
-                        gp.buttons[14].pressed ? 1 : 0,  // DLEFT
-                        gp.buttons[15].pressed ? 1 : 0,  // DRIGHT
-                        gp.buttons[16]?.pressed ? 1 : 0 // HOME
-);
-  }
+//     window.DS_setTeleop(cmd_lx,
+//                         cmd_az,
+//                         gp.axes[2] || 0.0,     // rx
+//                         gp.axes[3] || 0.0,     // ry
+//                         rt,
+//                         lt,
+//                         gp.buttons[0].pressed ? 1 : 0,   // A
+//                         gp.buttons[1].pressed ? 1 : 0,   // B
+//                         gp.buttons[2].pressed ? 1 : 0,   // X
+//                         gp.buttons[3].pressed ? 1 : 0,   // Y
+//                         gp.buttons[4].pressed ? 1 : 0,   // LB
+//                         gp.buttons[5].pressed ? 1 : 0,   // RB
+//                         gp.buttons[8].pressed ? 1 : 0,   // BACK
+//                         gp.buttons[9].pressed ? 1 : 0,   // START
+//                         gp.buttons[10].pressed ? 1 : 0,  // LCLICK
+//                         gp.buttons[11].pressed ? 1 : 0,  // RCLICK
+//                         gp.buttons[12].pressed ? 1 : 0,  // DUP
+//                         gp.buttons[13].pressed ? 1 : 0,  // DDOWN
+//                         gp.buttons[14].pressed ? 1 : 0,  // DLEFT
+//                         gp.buttons[15].pressed ? 1 : 0,  // DRIGHT
+//                         gp.buttons[16]?.pressed ? 1 : 0 // HOME
+// );
+//   }
 
 
-  setWheelSteer(steerRaw * MAX_STEER_DEG);
-  setThrottle(throttleRaw);
-}
+//   setWheelSteer(steerRaw * MAX_STEER_DEG);
+//   setThrottle(throttleRaw);
+// }
 
-function setWheelSteer(deg) {
-  // Front wheels steer; rear wheels fixed
-  const frontTransform = `rotate(${deg.toFixed(1)}deg)`;
-  const rearTransform = `rotate(0deg)`;
+// function setWheelSteer(deg) {
+//   // Front wheels steer; rear wheels fixed
+//   const frontTransform = `rotate(${deg.toFixed(1)}deg)`;
+//   const rearTransform = `rotate(0deg)`;
 
-  if (wheelFL) wheelFL.style.transform = frontTransform;
-  if (wheelFR) wheelFR.style.transform = frontTransform;
-  if (wheelRL) wheelRL.style.transform = rearTransform;
-  if (wheelRR) wheelRR.style.transform = rearTransform;
+//   if (wheelFL) wheelFL.style.transform = frontTransform;
+//   if (wheelFR) wheelFR.style.transform = frontTransform;
+//   if (wheelRL) wheelRL.style.transform = rearTransform;
+//   if (wheelRR) wheelRR.style.transform = rearTransform;
 
-  // Color tint based on steering intensity (optional)
-  const intensity = Math.min(1, Math.abs(deg) / MAX_STEER_DEG);
-  const baseColor = 63; // from #3f485f
-  const delta = Math.round(80 * intensity);
-  const newG = baseColor + delta;
-  const newB = baseColor + delta;
+//   // Color tint based on steering intensity (optional)
+//   const intensity = Math.min(1, Math.abs(deg) / MAX_STEER_DEG);
+//   const baseColor = 63; // from #3f485f
+//   const delta = Math.round(80 * intensity);
+//   const newG = baseColor + delta;
+//   const newB = baseColor + delta;
 
-  [wheelFL, wheelFR, wheelRL, wheelRR].forEach(w => {
-    if (!w) return;
-    w.style.backgroundColor = `rgb(${baseColor}, ${newG}, ${newB})`;
-  });
-}
+//   [wheelFL, wheelFR, wheelRL, wheelRR].forEach(w => {
+//     if (!w) return;
+//     w.style.backgroundColor = `rgb(${baseColor}, ${newG}, ${newB})`;
+//   });
+// }
 
-function setThrottle(throttle) {
-  // Clamp to [-1, 1]
-  const t = Math.max(-1, Math.min(1, throttle));
-  const percent = (t * 100).toFixed(0);
+// function setThrottle(throttle) {
+//   // Clamp to [-1, 1]
+//   const t = Math.max(-1, Math.min(1, throttle));
+//   const percent = (t * 100).toFixed(0);
 
-  // Fill grows symmetrically from center:
-  // height proportional to |t|, and translate so center = 50%
-  const height = Math.abs(t) * 100;
-  const directionSign = t >= 0 ? 1 : -1; // up / down from center
-  console.log("SetThrottle")
-  if (throttleFill) {
-    throttleFill.style.height = `${height}%`;
-    throttleFill.style.transform =
-      `translateY(${directionSign > 0 ? "0%" : "-100%"})`;
-  }
+//   // Fill grows symmetrically from center:
+//   // height proportional to |t|, and translate so center = 50%
+//   const height = Math.abs(t) * 100;
+//   const directionSign = t >= 0 ? 1 : -1; // up / down from center
+//   console.log("SetThrottle")
+//   if (throttleFill) {
+//     throttleFill.style.height = `${height}%`;
+//     throttleFill.style.transform =
+//       `translateY(${directionSign > 0 ? "0%" : "-100%"})`;
+//   }
 
-  if (throttleLabel) {
-    const dirLabel = t > 0.05 ? "Forward" : t < -0.05 ? "Reverse" : "Neutral";
-    throttleLabel.textContent =
-      `Throttle: ${percent}% (${dirLabel})`;
-  }
-}
+//   if (throttleLabel) {
+//     const dirLabel = t > 0.05 ? "Forward" : t < -0.05 ? "Reverse" : "Neutral";
+//     throttleLabel.textContent =
+//       `Throttle: ${percent}% (${dirLabel})`;
+//   }
+// }
 //window.setThrottle = setThrottle;
 
 // Kick off

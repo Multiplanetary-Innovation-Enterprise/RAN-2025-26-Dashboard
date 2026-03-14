@@ -274,6 +274,9 @@ function handleWheelState(data) {
   updateWheelCard("fr", frWheel, ws.fr);
   updateWheelCard("rl", rlWheel, ws.rl);
   updateWheelCard("rr", rrWheel, ws.rr);
+
+  updateRoverVisual(ws);
+  updateThrottleFromWheelVelocity(ws);
 }
 
 function updateWheelCard(name, card, wheelData) {
@@ -371,6 +374,60 @@ function handleDriveMode(drivemode) {
   if (!el) return;
 
   el.textContent = mode;
+}
+
+function updateRoverVisual(ws) {
+
+  const fl = ws.fl;
+  const fr = ws.fr;
+  const rl = ws.rl;
+  const rr = ws.rr;
+
+  wheelFL.style.transform = `rotate(${fl.steer_deg}deg)`;
+  wheelFR.style.transform = `rotate(${fr.steer_deg}deg)`;
+  wheelRL.style.transform = `rotate(${rl.steer_deg}deg)`;
+  wheelRR.style.transform = `rotate(${rr.steer_deg}deg)`;
+
+}
+
+function updateThrottleFromWheelVelocity(ws) {
+
+  if (!ws) return;
+
+  const wheels = [ws.fl, ws.fr, ws.rl, ws.rr]
+    .filter(w => w && typeof w.rps === "number");
+
+  if (wheels.length === 0) return;
+
+  // average wheel speed
+  const avgRps = wheels.reduce((sum, w) => sum + w.rps, 0) / wheels.length;
+
+  // configure this for your rover
+  const MAX_RPS = 50;
+
+  // normalize to -1 → 1
+  let throttle = avgRps / MAX_RPS;
+
+  throttle = Math.max(-1, Math.min(1, throttle));
+
+  const throttleFill = document.getElementById("throttle-fill");
+  const throttleLabel = document.getElementById("throttle-label");
+
+  if (!throttleFill || !throttleLabel) return;
+
+  const height = Math.abs(throttle) * 100;
+
+  throttleFill.style.height = `${height}%`;
+
+  if (throttle >= 0) {
+    throttleFill.style.bottom = "50%";
+    throttleFill.style.top = "auto";
+  } else {
+    throttleFill.style.top = "50%";
+    throttleFill.style.bottom = "auto";
+  }
+
+  throttleLabel.textContent = `Throttle: ${(throttle * 100).toFixed(0)}%`;
 }
 
 /* Keyboard teleop: W/S forward/back, A/D left/right. */
