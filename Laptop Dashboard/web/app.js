@@ -216,6 +216,10 @@ function handleServerMessage(m) {
       console.log("TLM wheel_state received:", m.wheel_state);
       handleWheelState(m.wheel_state);
     }
+    if (m.drive_mode) {
+      console.log("TLM drive mode recieved:", m.drive_mode);
+      handleDriveMode(m.drive_mode);
+    }
     if (m.net) {
       // Instantaneous kbps values
       const ctl = m.net.ctl_kbps ?? 0;
@@ -355,6 +359,18 @@ function updateFaultTable(faults) {
       cell.className = `fault-cell ${active ? "fault-active" : "fault-ok"}`;
     });
   });
+}
+
+function handleDriveMode(drivemode) {
+  if (!drivemode) return;
+
+  const mode = drivemode.drive_mode ?? drivemode;
+  if (!mode) return;
+
+  const el = document.getElementById("drive-mode-value");
+  if (!el) return;
+
+  el.textContent = mode;
 }
 
 /* Keyboard teleop: W/S forward/back, A/D left/right. */

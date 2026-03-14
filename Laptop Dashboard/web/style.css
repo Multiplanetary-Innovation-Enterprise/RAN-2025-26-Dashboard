@@ -293,3 +293,19 @@ body {
 .fault-cell.unknown {
   color: #777;
 }
+
+/* drive mode */
+.drive-mode-indicator {
+  margin-bottom: 10px;
+  font-size: 16px;
+}
+
+.drive-mode-indicator .label {
+  opacity: 0.7;
+  margin-right: 6px;
+}
+
+#drive-mode-value {
+  font-weight: bold;
+  color: #4fd1c5;
+}
