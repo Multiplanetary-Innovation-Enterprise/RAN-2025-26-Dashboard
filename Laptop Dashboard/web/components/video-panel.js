@@ -52,7 +52,7 @@ class VideoPanel extends HTMLElement {
         });
 
         try {
-            const response = await fetch('http://192.168.1.60:9002/video.h264', {
+            const response = await fetch('http://192.168.1.50:9002/video.h264', {
                 signal: this.abortController.signal
             });
             
