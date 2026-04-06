@@ -9,7 +9,7 @@ class VideoPanel extends HTMLElement {
         
         this.innerHTML = `
             <h3>Live Video (H.264)</h3>
-            <div style="position: relative; width: 100%; height: 240px; background: #000;">
+            <div style="position: relative; width: 100%; height: 100%; background: #000;">
                 <video id="h264-player" autoplay muted playsinline 
                        style="width: 100%; height: 100%; object-fit: contain;"></video>
                 <div id="videoStats" style="position: absolute; top: 5px; left: 5px; color: #0f0; background: rgba(0,0,0,0.5); padding: 2px;">Connecting...</div>
