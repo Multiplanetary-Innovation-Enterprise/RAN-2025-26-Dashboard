@@ -31,6 +31,12 @@ class ControllerPanel extends HTMLElement {
 No input yet…
           </pre>
         </div>
+
+        <div class="controller-slot" data-slot="1">
+          <h3>Controller 2 (optional)</h3>
+          <p class="status">Not connected</p>
+          <div class="buttons-grid"></div>
+        </div>
       </div>
     `;
   }
