@@ -235,10 +235,11 @@ function updateRoverFromGamepad(gp) {
     //window.DS_setTeleop(cmd_lx, cmd_az);
     window.DS_setTeleop(cmd_lx,
                         cmd_az,
-                        gp.axes[2] || 0.0,     // rx
-                        gp.axes[3] || 0.0,     // ry
+                        //gp.axes[2] || 0.0,     // rx
+                        //gp.axes[3] || 0.0,     // ry
                         rt,
                         lt,
+                        /*
                         gp.buttons[0].pressed ? 1 : 0,   // A
                         gp.buttons[1].pressed ? 1 : 0,   // B
                         gp.buttons[2].pressed ? 1 : 0,   // X
@@ -254,6 +255,7 @@ function updateRoverFromGamepad(gp) {
                         gp.buttons[14].pressed ? 1 : 0,  // DLEFT
                         gp.buttons[15].pressed ? 1 : 0,  // DRIGHT
                         gp.buttons[16]?.pressed ? 1 : 0 // HOME
+                        */
 );
   }
 
