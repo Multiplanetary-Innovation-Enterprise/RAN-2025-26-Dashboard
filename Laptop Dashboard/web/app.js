@@ -15,29 +15,14 @@ let ws = null;
 let isConnected = false;
 let latestFaults = null;
 let lastCmdSentMs = 0;
-let teleop_lx = 0.0;                // linear x (m/s)
-let teleop_az = 0.0;                // angular z (rad/s)
-let teleop_lt = 0.0;                // linear x (m/s)
-let teleop_rt = 0.0;               // angular z (rad/s)
-let LT = 0.0;
-let RT = 0.0;
-let RX = 0.0;
-let RY = 0.0;
-let A = 0.0;
-let B = 0.0;
-let X = 0.0;
-let Y = 0.0;
-let LB = 0.0;
-let RB = 0.0;
-let BACK = 0.0;
-let START = 0.0;
-let LCLICK = 0.0;
-let RCLICK = 0.0;
-let DPAD_UP = 0.0;
-let DPAD_DOWN = 0.0;
-let DPAD_LEFT = 0.0;
-let DPAD_RIGHT = 0.0;
-let HOME = 0.0;
+
+let dualTeleopCmd = {
+  c1_lx: 0, c1_az: 0, c1_rx: 0, c1_ry: 0, c1_rt: 0, c1_lt: 0,
+  c1_a: 0, c1_b: 0, c1_x: 0, c1_y: 0, c1_lb: 0, c1_rb: 0, c1_back: 0, c1_start: 0, c1_lclick: 0, c1_rclick: 0, c1_dup: 0, c1_ddown: 0, c1_dleft: 0, c1_dright: 0, c1_home: 0, c1_share: 0,
+  c2_lx: 0, c2_az: 0, c2_rx: 0, c2_ry: 0, c2_rt: 0, c2_lt: 0,
+  c2_a: 0, c2_b: 0, c2_x: 0, c2_y: 0, c2_lb: 0, c2_rb: 0, c2_back: 0, c2_start: 0, c2_lclick: 0, c2_rclick: 0, c2_dup: 0, c2_ddown: 0, c2_dleft: 0, c2_dright: 0, c2_home: 0, c2_share: 0
+};
+
 const CMD_PERIOD_MS = 50;           // 20 Hz cap
 const HEARTBEAT_PERIOD_MS = 200;
 const WHEEL_STATE_POLL_MS = 100;    // 10 Hz
@@ -66,39 +51,47 @@ const FAULT_LIST = [
   "sticky_stator_over_current",
 ];
 
-// Allow other scripts (gamepad.js) to set teleop targets cleanly.
-window.DS_setTeleop = function(lx, az, lt2, rt2) {
-  teleop_lx = Number(lx) || 0.0;
-  teleop_az = Number(az) || 0.0;
-  teleop_lt = Number(lt2) || 0.0;
-  teleop_rt = Number(rt2) || 0.0;
-  //console.log("Lx: " + teleop_lx)
-  //console.log("Az: " + teleop_az)
-  $("#lx").textContent = teleop_lx.toFixed(2);
-  $("#az").textContent = teleop_az.toFixed(2);
+window.DS_setTeleop = function(
+  c1_lx, c1_az, c1_rx, c1_ry, c1_rt, c1_lt,
+  c1_a, c1_b, c1_x, c1_y, c1_lb, c1_rb, c1_back, c1_start, c1_lclick, c1_rclick, c1_dup, c1_ddown, c1_dleft, c1_dright, c1_home, c1_share,
+  c2_lx, c2_az, c2_rx, c2_ry, c2_rt, c2_lt,
+  c2_a, c2_b, c2_x, c2_y, c2_lb, c2_rb, c2_back, c2_start, c2_lclick, c2_rclick, c2_dup, c2_ddown, c2_dleft, c2_dright, c2_home, c2_share
+) {
+  dualTeleopCmd = {
+    c1_lx, c1_az, c1_rx, c1_ry, c1_rt, c1_lt,
+    c1_a, c1_b, c1_x, c1_y, c1_lb, c1_rb, c1_back, c1_start, c1_lclick, c1_rclick, c1_dup, c1_ddown, c1_dleft, c1_dright, c1_home, c1_share,
+    c2_lx, c2_az, c2_rx, c2_ry, c2_rt, c2_lt,
+    c2_a, c2_b, c2_x, c2_y, c2_lb, c2_rb, c2_back, c2_start, c2_lclick, c2_rclick, c2_dup, c2_ddown, c2_dleft, c2_dright, c2_home, c2_share
+  };
+
+  // Update UI for Controller 1
+  const lxEl = $("#lx");
+  const azEl = $("#az");
+  if (lxEl) lxEl.textContent = Number(c1_lx || 0).toFixed(2);
+  if (azEl) azEl.textContent = Number(c1_az || 0).toFixed(2);
 };
 
-window.updateButtons = function(gp) {
-  RX = Number(gp.axes[2]) || 0.0;
-  RY = Number(gp.axes[3]) || 0.0;
-  LT=gp.buttons[6].value || 0.0;
-  RT=gp.buttons[7].value || 0.0;
-  A=gp.buttons[0].value;
-  B=gp.buttons[1].value;
-  X=gp.buttons[2].value;
-  Y=gp.buttons[3].value;
-  LB=gp.buttons[4].value;
-  RB=gp.buttons[5].value;
-  BACK=gp.buttons[8].value;
-  START=gp.buttons[9].value;
-  LCLICK=gp.buttons[10].value;
-  RCLICK=gp.buttons[11].value;
-  DPAD_UP=gp.buttons[12].value;
-  DPAD_DOWN=gp.buttons[13].value;
-  DPAD_LEFT=gp.buttons[14].value;
-  DPAD_RIGHT=gp.buttons[15].value;
-  HOME=gp.buttons[16].value;
-}
+// window.updateButtons = function(gp) {
+//   RX = Number(gp.axes[2]) || 0.0;
+//   RY = Number(gp.axes[3]) || 0.0;
+//   LT=gp.buttons[6].value || 0.0;
+//   RT=gp.buttons[7].value || 0.0;
+//   A=gp.buttons[0].value;
+//   B=gp.buttons[1].value;
+//   X=gp.buttons[2].value;
+//   Y=gp.buttons[3].value;
+//   LB=gp.buttons[4].value;
+//   RB=gp.buttons[5].value;
+//   BACK=gp.buttons[8].value;
+//   START=gp.buttons[9].value;
+//   LCLICK=gp.buttons[10].value;
+//   RCLICK=gp.buttons[11].value;
+//   DPAD_UP=gp.buttons[12].value;
+//   DPAD_DOWN=gp.buttons[13].value;
+//   DPAD_LEFT=gp.buttons[14].value;
+//   DPAD_RIGHT=gp.buttons[15].value;
+//   HOME=gp.buttons[16].value;
+// }
 
 const $ = sel => document.querySelector(sel);
 
@@ -160,31 +153,12 @@ function telemetryPollLoop() {
 function cmdLoop() {
   const now = performance.now();
   if (isConnected && now - lastCmdSentMs >= CMD_PERIOD_MS) {
+    // Send the complete payload, adding the "t" identifier for the Python router
     const payload = { 
       t: "cmd", 
-      lx: teleop_lx, 
-      az: teleop_az,
-      rx: RX,
-      ry: RY,
-      lt: LT, 
-      rt: RT 
+      ...dualTeleopCmd 
     };
 
-    if (A) payload.btnA = 1;
-    if (B) payload.btnB = 1;
-    if (X) payload.btnX = 1;
-    if (Y) payload.btnY = 1;
-    if (LB) payload.btnLB = 1;
-    if (RB) payload.btnRB = 1;
-    if (BACK) payload.btnBACK = 1;
-    if (START) payload.btnSTART = 1;
-    if (LCLICK) payload.btnLCLICK = 1;
-    if (RCLICK) payload.btnRCLICK = 1;
-    if (DPAD_UP) payload.btnDUP = 1;
-    if (DPAD_DOWN) payload.btnDDOWN = 1;
-    if (DPAD_LEFT) payload.btnDLEFT = 1;
-    if (DPAD_RIGHT) payload.btnDRIGHT = 1;
-    if (HOME) payload.btnHOME = 1;
     sendJson(payload);
     lastCmdSentMs = now;
   }
@@ -382,10 +356,14 @@ function bindKeyboardTeleop() {
   function recompute() {
     const fwd   = (pressed.has("U") ? 1 : 0) + (pressed.has("D") ? -1 : 0);
     const turn  = (pressed.has("R") ? 1 : 0) + (pressed.has("L") ? -1 : 0);
-    teleop_lx = 0.5 * fwd;   // 0.5 m/s max — tune here
-    teleop_az = 1.0 * turn;  // 1.0 rad/s max — tune here
-    $("#lx").textContent = teleop_lx.toFixed(2);
-    $("#az").textContent = teleop_az.toFixed(2);
+    
+    dualTeleopCmd.c1_lx = 0.5 * fwd;   // 0.5 m/s max — tune here
+    dualTeleopCmd.c1_az = 1.0 * turn;  // 1.0 rad/s max — tune here
+    
+    const lxEl = $("#lx");
+    const azEl = $("#az");
+    if(lxEl) lxEl.textContent = dualTeleopCmd.c1_lx.toFixed(2);
+    if(azEl) azEl.textContent = dualTeleopCmd.c1_az.toFixed(2);
   }
   window.addEventListener("keydown", (e) => { const t = map[e.code]; if (t){ pressed.add(t); e.preventDefault(); recompute(); } });
   window.addEventListener("keyup",   (e) => { const t = map[e.code]; if (t){ pressed.delete(t); e.preventDefault(); recompute(); } });
