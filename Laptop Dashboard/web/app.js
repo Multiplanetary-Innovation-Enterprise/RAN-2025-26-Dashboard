@@ -159,6 +159,8 @@ function cmdLoop() {
       ...dualTeleopCmd 
     };
 
+    console.log("Sending:", payload);
+
     sendJson(payload);
     lastCmdSentMs = now;
   }
