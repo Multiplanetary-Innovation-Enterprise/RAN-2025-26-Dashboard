@@ -220,8 +220,10 @@ function updateRoverFromGamepad(gp) {
   //const rx = gp.axes[2] || 0;
   //const ry = gp.axes[3] || 0;
   //Triggers
-  const lt = gp.buttons[6].value || 0;
-  const rt = gp.buttons[7].value || 0;
+  //const lt = gp.buttons[6]?.value ?? 0;
+  //const rt = gp.buttons[7]?.value ?? 0;
+  const lt = (gp.axes[4] + 1) / 2;
+  const rt = (gp.axes[5] + 1) / 2;
 
   // In most gamepad layouts: up = -1, down = +1
   const throttleRaw = -ly; // so up stick = forward
@@ -235,10 +237,11 @@ function updateRoverFromGamepad(gp) {
     //window.DS_setTeleop(cmd_lx, cmd_az);
     window.DS_setTeleop(cmd_lx,
                         cmd_az,
-                        gp.axes[2] || 0.0,     // rx
-                        gp.axes[3] || 0.0,     // ry
+                        // gp.axes[2] || 0.0,     // rx
+                        // gp.axes[3] || 0.0,     // ry
                         rt,
                         lt,
+                        /*
                         gp.buttons[0].pressed ? 1 : 0,   // A
                         gp.buttons[1].pressed ? 1 : 0,   // B
                         gp.buttons[2].pressed ? 1 : 0,   // X
@@ -254,6 +257,7 @@ function updateRoverFromGamepad(gp) {
                         gp.buttons[14].pressed ? 1 : 0,  // DLEFT
                         gp.buttons[15].pressed ? 1 : 0,  // DRIGHT
                         gp.buttons[16]?.pressed ? 1 : 0 // HOME
+                        */
 );
   }
 
@@ -294,7 +298,6 @@ function setThrottle(throttle) {
   // height proportional to |t|, and translate so center = 50%
   const height = Math.abs(t) * 100;
   const directionSign = t >= 0 ? 1 : -1; // up / down from center
-  console.log("SetThrottle")
   if (throttleFill) {
     throttleFill.style.height = `${height}%`;
     throttleFill.style.transform =

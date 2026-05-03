@@ -81,8 +81,14 @@ window.DS_setTeleop = function(lx, az, lt2, rt2) {
 window.updateButtons = function(gp) {
   RX = Number(gp.axes[2]) || 0.0;
   RY = Number(gp.axes[3]) || 0.0;
-  LT=gp.buttons[6].value || 0.0;
-  RT=gp.buttons[7].value || 0.0;
+  LT = (gp.axes[4] + 1) / 2;
+  RT = (gp.axes[5] + 1) / 2;
+
+  //RT = Number(gp.buttons[6].value) || 0.0;
+  //LT = Number(gp.buttons[7].value) || 0.0;
+  //console.log("buttons[6]:", gp.buttons[6].value, "buttons[7]:", gp.buttons[7].value);
+  //console.log("axes:", [...gp.axes]);
+
   A=gp.buttons[0].value;
   B=gp.buttons[1].value;
   X=gp.buttons[2].value;
