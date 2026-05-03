@@ -132,14 +132,55 @@ function update() {
 }
 
 function sendDualTeleop() {
-  if (typeof window.DS_setTeleop === "function") {
-    window.DS_setTeleop(
-      teleopState[0].lx,
-      teleopState[0].az,
-      teleopState[1].lx,
-      teleopState[1].az
-    );
-  }
+  if (typeof window.DS_setTeleop !== "function") return;
+
+  const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+  const gp1 = gamepads[controllerState[0].index];
+  const gp2 = gamepads[controllerState[1].index];
+
+  const getBtn = (gp, idx) => {
+    if (!gp || !gp.buttons[idx]) return 0;
+    const b = gp.buttons[idx];
+    return (typeof b === "object" ? b.value : b) > 0.5 ? 1 : 0;
+  };
+
+  const getAnalog = (gp, type, idx) => {
+    if (!gp) return 0;
+    if (type === "axis") return gp.axes[idx] || 0;
+    if (type === "trigger") {
+      const b = gp.buttons[idx];
+      return b ? (typeof b === "object" ? b.value : b) : 0;
+    }
+    return 0;
+  };
+
+  window.DS_setTeleop(
+    // CONTROLLER 1
+    teleopState[0].lx,             
+    teleopState[0].az,             
+    getAnalog(gp1, "axis", 2),     // C1 Right stick X
+    getAnalog(gp1, "axis", 3),     // C1 Right stick Y
+    getAnalog(gp1, "trigger", 7),  // C1 Right Trigger (Button 7)
+    getAnalog(gp1, "trigger", 6),  // C1 Left Trigger (Button 6)
+    
+    getBtn(gp1, 0), getBtn(gp1, 1), getBtn(gp1, 2), getBtn(gp1, 3),
+    getBtn(gp1, 4), getBtn(gp1, 5), getBtn(gp1, 8), getBtn(gp1, 9),
+    getBtn(gp1, 10), getBtn(gp1, 11), getBtn(gp1, 12), getBtn(gp1, 13),
+    getBtn(gp1, 14), getBtn(gp1, 15), getBtn(gp1, 16), getBtn(gp1, 17),
+
+    // CONTROLLER 2
+    teleopState[1].lx,             
+    teleopState[1].az,             
+    getAnalog(gp2, "axis", 2),     // C2 Right stick X
+    getAnalog(gp2, "axis", 3),     // C2 Right stick Y
+    getAnalog(gp2, "trigger", 7),  // C2 Right Trigger
+    getAnalog(gp2, "trigger", 6),  // C2 Left Trigger
+    
+    getBtn(gp2, 0), getBtn(gp2, 1), getBtn(gp2, 2), getBtn(gp2, 3),
+    getBtn(gp2, 4), getBtn(gp2, 5), getBtn(gp2, 8), getBtn(gp2, 9),
+    getBtn(gp2, 10), getBtn(gp2, 11), getBtn(gp2, 12), getBtn(gp2, 13),
+    getBtn(gp2, 14), getBtn(gp2, 15), getBtn(gp2, 16), getBtn(gp2, 17)
+  );
 }
 
 function clearButtonIndicators(state) {
