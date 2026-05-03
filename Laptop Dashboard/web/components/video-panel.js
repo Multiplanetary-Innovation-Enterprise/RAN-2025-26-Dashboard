@@ -30,7 +30,7 @@ class VideoPanel extends HTMLElement {
         
         // Start both streams dynamically
         // Note: Make sure the IP matches your actual robot IP!
-        const host = "100.97.255.110:9002"; 
+        const host = "192.168.1.50:9002"; 
         this.startStreaming('1', `http://${host}/video/1.h264`);
         this.startStreaming('2', `http://${host}/video/2.h264`);
     }
