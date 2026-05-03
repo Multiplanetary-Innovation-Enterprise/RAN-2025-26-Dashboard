@@ -220,9 +220,8 @@ function updateRoverFromGamepad(gp) {
   //const rx = gp.axes[2] || 0;
   //const ry = gp.axes[3] || 0;
   //Triggers
-  const lt = gp.buttons[6].value || 0;
-  const rt = gp.buttons[7].value || 0;
-
+  const lt = (gp.axes[4] + 1) / 2;
+  const rt = (gp.axes[5] + 1) / 2;
   // In most gamepad layouts: up = -1, down = +1
   const throttleRaw = -ly; // so up stick = forward
   const steerRaw = lx;
