@@ -33,10 +33,7 @@ from aiohttp import web, WSMsgType, ClientSession, ClientTimeout
 STATIC_DIR = pathlib.Path(__file__).parent.parent / "web"
 
 # Point this to your Pi
-# Pi Tailscale: 100.97.255.110
-# Pi Router: 192.168.1.50
-PI_HTTP_VIDEO = "http://100.97.255.110:9002/video.mjpg"
-
+PI_HTTP_VIDEO = "http://192.168.1.50:9002/video.mjpg"   # <-- change IP
 # The Pi connects IN to the laptop WS (so no PI_WS_URL needed here)
 
 class DriverStationServer:
