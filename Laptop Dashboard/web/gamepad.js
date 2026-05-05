@@ -144,6 +144,7 @@ function sendDualTeleop() {
     return (typeof b === "object" ? b.value : b) > 0.5 ? 1 : 0;
   };
 
+  /*
   const getAnalog = (gp, type, idx) => {
     if (!gp) return 0;
     if (type === "axis") return gp.axes[idx] || 0;
@@ -153,6 +154,17 @@ function sendDualTeleop() {
     }
     return 0;
   };
+  */
+    const getAnalog = (gp, type, idx) => {
+      if (!gp) return 0;
+      if (type === "axis") return gp.axes[idx] || 0;
+      if (type === "trigger_axis") return (gp.axes[idx] + 1) / 2;  // remap -1→1 to 0→1
+      if (type === "trigger") {
+        const b = gp.buttons[idx];
+        return b ? (typeof b === "object" ? b.value : b) : 0;
+      }
+      return 0;
+    };
 
   window.DS_setTeleop(
     // CONTROLLER 1
@@ -160,9 +172,11 @@ function sendDualTeleop() {
     teleopState[0].az,             
     getAnalog(gp1, "axis", 2),     // C1 Right stick X
     getAnalog(gp1, "axis", 3),     // C1 Right stick Y
-    getAnalog(gp1, "trigger", 7),  // C1 Right Trigger (Button 7)
-    getAnalog(gp1, "trigger", 6),  // C1 Left Trigger (Button 6)
-    
+    //getAnalog(gp1, "trigger", 7),  // C1 Right Trigger (Button 7)
+    //getAnalog(gp1, "trigger", 6),  // C1 Left Trigger (Button 6)
+    getAnalog(gp1, "trigger_axis", 5),  // C1 Right Trigger (RT)
+    getAnalog(gp1, "trigger_axis", 4),  // C1 Left Trigger (LT)
+
     getBtn(gp1, 0), getBtn(gp1, 1), getBtn(gp1, 2), getBtn(gp1, 3),
     getBtn(gp1, 4), getBtn(gp1, 5), getBtn(gp1, 8), getBtn(gp1, 9),
     getBtn(gp1, 10), getBtn(gp1, 11), getBtn(gp1, 12), getBtn(gp1, 13),
@@ -173,8 +187,10 @@ function sendDualTeleop() {
     teleopState[1].az,             
     getAnalog(gp2, "axis", 2),     // C2 Right stick X
     getAnalog(gp2, "axis", 3),     // C2 Right stick Y
-    getAnalog(gp2, "trigger", 7),  // C2 Right Trigger
-    getAnalog(gp2, "trigger", 6),  // C2 Left Trigger
+    //getAnalog(gp2, "trigger", 7),  // C2 Right Trigger
+    //getAnalog(gp2, "trigger", 6),  // C2 Left Trigger
+    getAnalog(gp2, "trigger_axis", 5),  // C2 Right Trigger (RT)
+    getAnalog(gp2, "trigger_axis", 4),  // C2 Left Trigger (LT)
     
     getBtn(gp2, 0), getBtn(gp2, 1), getBtn(gp2, 2), getBtn(gp2, 3),
     getBtn(gp2, 4), getBtn(gp2, 5), getBtn(gp2, 8), getBtn(gp2, 9),
