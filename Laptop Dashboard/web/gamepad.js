@@ -158,7 +158,7 @@ function sendDualTeleop() {
     const getAnalog = (gp, type, idx) => {
       if (!gp) return 0;
       if (type === "axis") return gp.axes[idx] || 0;
-      if (type === "trigger_axis") return (gp.axes[idx] + 1) / 2;  // remap -1→1 to 0→1
+      if (type === "trigger_axis") return (gp.axes[idx] + 1) / 2;
       if (type === "trigger") {
         const b = gp.buttons[idx];
         return b ? (typeof b === "object" ? b.value : b) : 0;
@@ -172,8 +172,6 @@ function sendDualTeleop() {
     teleopState[0].az,             
     getAnalog(gp1, "axis", 2),     // C1 Right stick X
     getAnalog(gp1, "axis", 3),     // C1 Right stick Y
-    //getAnalog(gp1, "trigger", 7),  // C1 Right Trigger (Button 7)
-    //getAnalog(gp1, "trigger", 6),  // C1 Left Trigger (Button 6)
     getAnalog(gp1, "trigger_axis", 5),  // C1 Right Trigger (RT)
     getAnalog(gp1, "trigger_axis", 4),  // C1 Left Trigger (LT)
 
@@ -187,8 +185,6 @@ function sendDualTeleop() {
     teleopState[1].az,             
     getAnalog(gp2, "axis", 2),     // C2 Right stick X
     getAnalog(gp2, "axis", 3),     // C2 Right stick Y
-    //getAnalog(gp2, "trigger", 7),  // C2 Right Trigger
-    //getAnalog(gp2, "trigger", 6),  // C2 Left Trigger
     getAnalog(gp2, "trigger_axis", 5),  // C2 Right Trigger (RT)
     getAnalog(gp2, "trigger_axis", 4),  // C2 Left Trigger (LT)
     
