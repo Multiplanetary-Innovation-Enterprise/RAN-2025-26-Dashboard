@@ -11,7 +11,7 @@ Goal
     - ownership/mux (teleop vs auton)
 
  Transport
-  WebSocket endpoint: /ws
+  WebSocket endpoint: /ws on the driver-station WebSocket port (8766)
   Message encoding: UTF-8 JSON objects, one per WS frame.
   Recommended JSON serialization on sender:
     separators=(",",":")  
@@ -88,7 +88,7 @@ Behavior rules
   "t":"hello",
   "ver":"0.2",
   "server":"driver-station",
-  "caps":["teleop","queue","estop","video_mjpg"],
+  "caps":["teleop","queue","estop"],
   "defaults":{"telemetry_hz":10,"cmd_hz_max":20}
 }
 

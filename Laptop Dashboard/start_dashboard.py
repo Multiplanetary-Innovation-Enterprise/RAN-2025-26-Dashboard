@@ -8,6 +8,7 @@ One-command launcher for the Driver Station dashboard.
 - Installs requirements.txt (if present)
 - Starts server/app.py using the venv's Python
 - Opens http://localhost:8765 in your browser
+- The WebSocket relay listens on ws://<laptop-ip>:8766/ws
 - Ctrl+C in this script will stop the server
 """
 

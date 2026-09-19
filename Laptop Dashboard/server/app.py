@@ -1,169 +1,514 @@
 """
-server/app.py — Driver Station Host + Relay
+server/app.py — Driver Station HTTP + WebSocket Relay
 
-This laptop server does 3 things:
-  1) Serves the web dashboard (index + static files)
-  2) Hosts the browser WebSocket at /ws
-     - forwards browser control messages to the Pi connection
-     - forwards Pi telemetry/events to all browsers
-  3) Proxies the Pi MJPEG stream at /video.mjpg
-     - browser always loads video from the laptop, never directly from the Pi
+The laptop hosts two lightweight services:
 
-Responsibilities:
-- Serves the dashboard UI:
-  - GET / -> web/index.html
-  - GET /{static} -> web/* assets
-- Hosts WebSocket endpoint /ws:
-  - Accepts browser clients (many)
-  - Accepts the Pi client (usually one)
-  - Relays messages:
-      Browser -> Pi: cmd/estop/queue/set/mux/etc
-      Pi -> Browser: tlm/alerts/queue.state/queue.result/etc
-- Proxies MJPEG video endpoint:
-  - GET /video.mjpg -> streams bytes from Pi's MJPEG endpoint
+  HTTP server (port 8765)
+    - Serves the dashboard UI and static assets.
+
+  WebSocket server (port 8766)
+    - Accepts the rover Pi connection.
+    - Accepts browser connections.
+    - Relays browser control messages to the Pi.
+    - Relays Pi telemetry/events to browsers.
+    - Handles application heartbeats directly.
+
+Video is no longer proxied by the laptop. The dashboard uses the Pi's
+H.264 stream directly, so the old MJPEG proxy has been removed.
 
 Run:
-  python server/app.py
-  open http://localhost:8765
+    python server/app.py
+
+Open:
+    http://localhost:8765
 """
 
-import asyncio, json, pathlib
-from aiohttp import web, WSMsgType, ClientSession, ClientTimeout
+from __future__ import annotations
 
-STATIC_DIR = pathlib.Path(__file__).parent.parent / "web"
+import asyncio
+import json
+import pathlib
+import threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
 
-# Point this to your Pi
-PI_HTTP_VIDEO = "http://192.168.1.50:9002/video.mjpg"   # <-- change IP
-# The Pi connects IN to the laptop WS (so no PI_WS_URL needed here)
+from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed
+
+
+ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
+STATIC_DIR = ROOT_DIR / "web"
+
+HTTP_HOST = "0.0.0.0"
+HTTP_PORT = 8765
+
+WS_HOST = "0.0.0.0"
+WS_PORT = 8766
+WS_PATH = "/ws"
+
+MAX_WS_MESSAGE_SIZE = 256 * 1024
+PING_INTERVAL = 20
+PING_TIMEOUT = 15
+OPEN_TIMEOUT = 5
+CLOSE_TIMEOUT = 5
+
+
+class StaticRequestHandler(SimpleHTTPRequestHandler):
+    """Serve dashboard files from the web directory."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
+
+    def log_message(self, fmt, *args):
+        # Keep the dashboard console readable. WebSocket diagnostics are
+        # logged separately below.
+        pass
+
 
 class DriverStationServer:
+    """
+    Owns the WebSocket relay state.
+
+    A connection is classified as Pi or browser from its first application
+    message. Browser output uses a small per-browser queue so a slow browser
+    cannot directly block the Pi relay path.
+    """
+
     def __init__(self):
-        # Browser connections
-        self.browsers = set()
-
-        # Single Pi WS connection (optional, but expected)
         self.pi_ws = None
+        self.pi_send_lock = asyncio.Lock()
 
-        # Shared HTTP session for proxying video
-        self.http = None
+        # websocket -> asyncio.Queue[str]
+        self.browser_queues: dict = {}
+        self.browser_writer_tasks: dict = {}
 
-    async def index(self, request: web.Request):
-        return web.FileResponse(STATIC_DIR / "index.html")
+    # ------------------------------------------------------------
+    # Browser connection management
+    # ------------------------------------------------------------
 
-    async def static(self, request: web.Request):
-        path = request.match_info["path"]
-        file_path = STATIC_DIR / path
-        if not file_path.exists():
-            raise web.HTTPNotFound()
-        return web.FileResponse(file_path)
+    async def add_browser(self, ws) -> None:
+        queue = asyncio.Queue(maxsize=32)
+        self.browser_queues[ws] = queue
+        self.browser_writer_tasks[ws] = asyncio.create_task(
+            self._browser_writer(ws, queue)
+        )
 
-    async def ws_handler(self, request: web.Request):
-        """
-        Single WS endpoint (/ws) supports:
-          - browsers
-          - pi client
+    async def remove_browser(self, ws) -> None:
+        self.browser_queues.pop(ws, None)
 
-        We distinguish them by the first message:
-          - Pi sends: {"t":"hello.ack","client":"pi",...}
-          - Browser typically sends hb/cmd/etc or just waits for hello
-        """
-        ws = web.WebSocketResponse(max_msg_size=256 * 1024)
-        await ws.prepare(request)
+        writer = self.browser_writer_tasks.pop(ws, None)
+        if writer is not None:
+            writer.cancel()
+            await asyncio.gather(writer, return_exceptions=True)
 
-        # Give all clients a server hello
-        await ws.send_str(json.dumps({"t":"hello","ver":"0.2","server":"laptop"}, separators=(",",":")))
-
-        role = "unknown"
-        self.browsers.add(ws)
-
+    async def _browser_writer(self, ws, queue: asyncio.Queue) -> None:
+        """Serialize writes to one browser WebSocket."""
         try:
-            async for msg in ws:
-                if msg.type != WSMsgType.TEXT:
-                    continue
+            while True:
+                data = await queue.get()
+                await ws.send(data)
 
-                try:
-                    m = json.loads(msg.data)
-                except Exception:
-                    await ws.send_str(json.dumps({"t":"alert","level":"error","msg":"bad JSON"}))
-                    continue
+        except asyncio.CancelledError:
+            raise
 
-                # Detect Pi client
-                if role == "unknown" and m.get("t") == "hello.ack" and m.get("client") == "pi":
-                    role = "pi"
-                    # remove from browsers set if it was temporarily added
-                    self.browsers.discard(ws)
-                    self.pi_ws = ws
-                    print("[Laptop] Pi connected (WS)")
-                    # tell browsers
-                    await self._broadcast({"t":"alert","level":"info","msg":"Pi connected"})
-                    continue
-
-                if role == "pi":
-                    # Messages from Pi should be forwarded to browsers verbatim
-                    await self._broadcast_raw(msg.data)
-                    continue
-
-                # Otherwise this is a browser
-                role = "browser"
-
-                # Forward browser messages to Pi if present
-                if self.pi_ws is not None:
-                    await self.pi_ws.send_str(msg.data)
-                else:
-                    # keep browser UI responsive with a clear warning
-                    if m.get("t") in ("cmd","estop","queue.drive","queue.cancel"):
-                        await ws.send_str(json.dumps({"t":"alert","level":"warn","msg":"Pi not connected"}))
-
-        finally:
-            self.browsers.discard(ws)
-            if self.pi_ws is ws:
-                self.pi_ws = None
-                print("[Laptop] Pi disconnected (WS)")
-                await self._broadcast({"t":"alert","level":"warn","msg":"Pi disconnected"})
-        return ws
-
-    async def _broadcast(self, obj: dict):
-        s = json.dumps(obj, separators=(",",":"))
-        await self._broadcast_raw(s)
-
-    async def _broadcast_raw(self, data: str):
-        await asyncio.gather(*(b.send_str(data) for b in list(self.browsers)), return_exceptions=True)
-
-    async def mjpeg_proxy(self, request: web.Request):
-        """
-        Proxies Pi MJPEG so the browser always uses laptop /video.mjpg
-        """
-        if self.http is None:
-            timeout = ClientTimeout(total=None, sock_connect=3, sock_read=None)
-            self.http = ClientSession(timeout=timeout)
-
-        # Pass through as a byte stream
-        headers = {"Content-Type": "multipart/x-mixed-replace; boundary=--frame"}
-        resp = web.StreamResponse(status=200, reason="OK", headers=headers)
-        await resp.prepare(request)
-
-        try:
-            async with self.http.get(PI_HTTP_VIDEO) as upstream:
-                async for chunk in upstream.content.iter_chunked(4096):
-                    await resp.write(chunk)
-        except Exception:
-            # If Pi video is down, just end the stream
+        except ConnectionClosed:
             pass
 
-        return resp
+        except Exception as e:
+            print(
+                f"[Laptop] Browser writer error: "
+                f"{type(e).__name__}: {e}"
+            )
 
-async def make_app():
-    srv = DriverStationServer()
+    def _queue_browser_message(self, ws, data: str) -> None:
+        """
+        Queue a browser message without awaiting the network write.
 
-    app = web.Application()
-    app["srv"] = srv
+        The queue is intentionally bounded. If a browser falls behind,
+        dropping a telemetry message is preferable to allowing that browser
+        to create unbounded memory usage or stall the Pi relay.
+        """
+        queue = self.browser_queues.get(ws)
+        if queue is None:
+            return
 
-    app.router.add_get("/", srv.index)
-    app.router.add_get("/ws", srv.ws_handler)
-    app.router.add_get("/video.mjpg", srv.mjpeg_proxy)
-    app.router.add_get("/{path:.*}", srv.static)
+        try:
+            queue.put_nowait(data)
+        except asyncio.QueueFull:
+            # Drop the newest low-priority/broadcast message when the browser
+            # can't keep up. Control acknowledgements have a separate direct
+            # path below.
+            pass
 
-    return app
+    async def _send_browser_direct(self, ws, data: str) -> None:
+        """Send an immediate browser response such as heartbeat ACK."""
+        queue = self.browser_queues.get(ws)
+        if queue is None:
+            return
+
+        # For an ACK / warning, make room if necessary. The queue is bounded
+        # so this cannot grow indefinitely.
+        while True:
+            try:
+                queue.put_nowait(data)
+                return
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+
+    # ------------------------------------------------------------
+    # Pi connection management
+    # ------------------------------------------------------------
+
+    async def _send_pi(self, data: str) -> None:
+        """Serialize writes to the single Pi WebSocket."""
+        pi = self.pi_ws
+        if pi is None:
+            return
+
+        async with self.pi_send_lock:
+            try:
+                await pi.send(data)
+            except ConnectionClosed as e:
+                print(
+                    f"[Laptop] Pi send failed: "
+                    f"code={e.code}, reason={e.reason}"
+                )
+
+                if self.pi_ws is pi:
+                    self.pi_ws = None
+
+    # ------------------------------------------------------------
+    # Broadcast helpers
+    # ------------------------------------------------------------
+
+    def _broadcast_raw(self, data: str) -> None:
+        """Queue a message for all browsers without awaiting their sockets."""
+        for browser in list(self.browser_queues):
+            self._queue_browser_message(browser, data)
+
+    def _broadcast(self, obj: dict) -> None:
+        self._broadcast_raw(
+            json.dumps(obj, separators=(",", ":"))
+        )
+
+    # ------------------------------------------------------------
+    # WebSocket handler
+    # ------------------------------------------------------------
+
+    async def ws_handler(self, ws) -> None:
+        """
+        Handle one Pi or browser WebSocket connection.
+        """
+        request_path = urlsplit(ws.request.path).path
+        if request_path != WS_PATH:
+            await ws.close(
+                code=1008,
+                reason="invalid WebSocket path",
+            )
+            return
+
+        remote = ws.remote_address
+        role = "unknown"
+
+        # Everyone gets the server greeting first.
+        await ws.send(
+            json.dumps(
+                {
+                    "t": "hello",
+                    "ver": "0.2",
+                    "server": "laptop",
+                },
+                separators=(",", ":"),
+            )
+        )
+
+        try:
+            async for message in ws:
+                if isinstance(message, bytes):
+                    message = message.decode("utf-8")
+
+                try:
+                    msg = json.loads(message)
+                except (json.JSONDecodeError, TypeError):
+                    if role == "browser":
+                        await self._send_browser_direct(
+                            ws,
+                            json.dumps(
+                                {
+                                    "t": "alert",
+                                    "level": "error",
+                                    "msg": "bad JSON",
+                                },
+                                separators=(",", ":"),
+                            ),
+                        )
+                    continue
+
+                msg_type = msg.get("t")
+
+                # ------------------------------------------------
+                # Pi identification
+                # ------------------------------------------------
+                if (
+                    role == "unknown"
+                    and msg_type == "hello.ack"
+                    and msg.get("client") == "pi"
+                ):
+                    role = "pi"
+
+                    old_pi = self.pi_ws
+                    self.pi_ws = ws
+
+                    print(
+                        f"[Laptop] Pi connected (WS) "
+                        f"remote={remote}"
+                    )
+
+                    # If a previous Pi connection still exists, explicitly
+                    # close it. The identity check in finally() prevents that
+                    # old handler from clearing the new connection.
+                    if old_pi is not None and old_pi is not ws:
+                        try:
+                            await old_pi.close(
+                                code=1012,
+                                reason="replaced by new Pi connection",
+                            )
+                        except Exception:
+                            pass
+
+                    self._broadcast(
+                        {
+                            "t": "alert",
+                            "level": "info",
+                            "msg": "Pi connected",
+                        }
+                    )
+                    continue
+
+                # ------------------------------------------------
+                # Pi messages
+                # ------------------------------------------------
+                if role == "pi":
+                    if msg_type == "hb":
+                        # The server itself acknowledges the Pi heartbeat.
+                        # This keeps RTT measurement independent of browsers.
+                        await ws.send(
+                            json.dumps(
+                                {
+                                    "t": "hb.ack",
+                                    "id": msg.get("id"),
+                                    "ts_ms": msg.get("ts_ms"),
+                                },
+                                separators=(",", ":"),
+                            )
+                        )
+                        continue
+
+                    # Telemetry/events are broadcast asynchronously to
+                    # browsers. A slow browser cannot block this handler.
+                    self._broadcast_raw(message)
+                    continue
+
+                # ------------------------------------------------
+                # Browser identification
+                # ------------------------------------------------
+                if role == "unknown":
+                    role = "browser"
+                    await self.add_browser(ws)
+                    print(
+                        f"[Laptop] Browser connected: remote={remote}"
+                    )
+
+                if role == "browser":
+                    # Browser heartbeat is acknowledged locally. The Pi
+                    # doesn't need to know about browser keepalive traffic.
+                    if msg_type == "hb":
+                        await self._send_browser_direct(
+                            ws,
+                            json.dumps(
+                                {
+                                    "t": "hb.ack",
+                                    "id": msg.get("id"),
+                                    "ts_ms": msg.get("ts_ms"),
+                                },
+                                separators=(",", ":"),
+                            ),
+                        )
+                        continue
+
+                    # Forward all other browser protocol messages to Pi.
+                    if self.pi_ws is not None:
+                        await self._send_pi(message)
+                    elif msg_type in (
+                        "cmd",
+                        "estop",
+                        "queue.drive",
+                        "queue.cancel",
+                        "mux.request",
+                    ):
+                        await self._send_browser_direct(
+                            ws,
+                            json.dumps(
+                                {
+                                    "t": "alert",
+                                    "level": "warn",
+                                    "msg": "Pi not connected",
+                                },
+                                separators=(",", ":"),
+                            ),
+                        )
+
+        except ConnectionClosed as e:
+            print(
+                f"[Laptop] WebSocket closed: "
+                f"role={role}, remote={remote}, "
+                f"code={e.code}, reason={e.reason}"
+            )
+
+        except Exception as e:
+            print(
+                f"[Laptop] WebSocket error: "
+                f"role={role}, remote=RAN-2025-26-Rover-Code-main-websockets-migrated{remote}, "
+                f"{type(e).__name__}: {e}"
+            )
+
+        finally:
+            if role == "browser":
+                await self.remove_browser(ws)
+                print(
+                    f"[Laptop] Browser disconnected: remote={remote}"
+                )
+
+            elif role == "pi":
+                # Only clear the Pi reference if this is still the active
+                # connection. A stale connection must never clear a newer one.
+                if self.pi_ws is ws:
+                    self.pi_ws = None
+
+                    print(
+                        f"[Laptop] Pi disconnected: remote={remote}"
+                    )
+
+                    self._broadcast(
+                        {
+                            "t": "alert",
+                            "level": "warn",
+                            "msg": "Pi disconnected",
+                        }
+                    )
+
+    # ------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------
+
+    async def close(self) -> None:
+        """Close tracked WebSocket connections."""
+        if self.pi_ws is not None:
+            try:
+                await self.pi_ws.close(
+                    code=1001,
+                    reason="server shutdown",
+                )
+            except Exception:
+                pass
+            self.pi_ws = None
+
+        for browser in list(self.browser_queues):
+            try:
+                await browser.close(
+                    code=1001,
+                    reason="server shutdown",
+                )
+            except Exception:
+                pass
+
+            await self.remove_browser(browser)
+
+
+class DriverStationApp:
+    """Own the static HTTP server and WebSocket server."""
+
+    def __init__(self):
+        self.relay = DriverStationServer()
+        self.http_server = None
+        self.http_thread = None
+        self.ws_server = None
+
+    def start_http_server(self) -> None:
+        self.http_server = ThreadingHTTPServer(
+            (HTTP_HOST, HTTP_PORT),
+            StaticRequestHandler,
+        )
+
+        self.http_thread = threading.Thread(
+            target=self.http_server.serve_forever,
+            name="dashboard-http",
+            daemon=True,
+        )
+
+        self.http_thread.start()
+
+        print(
+            f"[Laptop] HTTP server listening on "
+            f"http://{HTTP_HOST}:{HTTP_PORT}"
+        )
+
+    async def start_websocket_server(self) -> None:
+        self.ws_server = await serve(
+            self.relay.ws_handler,
+            WS_HOST,
+            WS_PORT,
+            ping_interval=PING_INTERVAL,
+            ping_timeout=PING_TIMEOUT,
+            open_timeout=OPEN_TIMEOUT,
+            close_timeout=CLOSE_TIMEOUT,
+            max_size=MAX_WS_MESSAGE_SIZE,
+            max_queue=16,
+            server_header="RAN Driver Station",
+        )
+
+        print(
+            f"[Laptop] WebSocket server listening on "
+            f"ws://{WS_HOST}:{WS_PORT}{WS_PATH}"
+        )
+
+    async def close(self) -> None:
+        if self.ws_server is not None:
+            self.ws_server.close()
+            await self.ws_server.wait_closed()
+            self.ws_server = None
+
+        await self.relay.close()
+
+        if self.http_server is not None:
+            self.http_server.shutdown()
+            self.http_server.server_close()
+            self.http_server = None
+
+        if self.http_thread is not None:
+            self.http_thread.join(timeout=2)
+            self.http_thread = None
+
+
+async def main() -> None:
+    app = DriverStationApp()
+
+    app.start_http_server()
+    await app.start_websocket_server()
+
+    try:
+        await asyncio.Future()
+    finally:
+        print("[Laptop] Shutting down...")
+        await app.close()
+        print("[Laptop] Shutdown complete.")
+
 
 if __name__ == "__main__":
-    web.run_app(make_app(), host="0.0.0.0", port=8765)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

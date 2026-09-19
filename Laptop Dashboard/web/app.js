@@ -15,6 +15,12 @@ let ws = null;
 let isConnected = false;
 let latestFaults = null;
 let lastCmdSentMs = 0;
+let lastHeartbeatId = 0;
+let reconnectTimer = null;
+let reconnectDelayMs = 1000;
+const WS_PORT = 8766;
+const WS_PATH = "/ws";
+const MAX_RECONNECT_DELAY_MS = 5000;
 
 let dualTeleopCmd = {
   c1_lx: 0, c1_az: 0, c1_rx: 0, c1_ry: 0, c1_rt: 0, c1_lt: 0,
@@ -97,26 +103,79 @@ const $ = sel => document.querySelector(sel);
 
 function setConnStatus(text) { $("#connStatus").textContent = text; }
 function setOwner(text) { $("#owner").textContent = text; }
-function setVideoStats(text) { $("#videoStats").textContent = text; }
+function wsUrl() {
+  const scheme = location.protocol === "https:" ? "wss" : "ws";
+  return `${scheme}://${location.hostname}:${WS_PORT}${WS_PATH}`;
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer || isConnected) return;
+
+  setConnStatus(`reconnecting in ${(reconnectDelayMs / 1000).toFixed(1)}s`);
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectWebSocket();
+  }, reconnectDelayMs);
+
+  reconnectDelayMs = Math.min(
+    reconnectDelayMs * 2,
+    MAX_RECONNECT_DELAY_MS
+  );
+}
 
 function connectWebSocket() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
 
-  ws = new WebSocket(`ws://${location.hostname}:8765/ws`);
-  ws.onopen = () => {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  const socket = new WebSocket(wsUrl());
+  ws = socket;
+  setConnStatus("connecting");
+
+  socket.onopen = () => {
+    // Ignore events from an obsolete socket.
+    if (ws !== socket) return;
+
     isConnected = true;
+    reconnectDelayMs = 1000;
     setConnStatus("connected");
-    sendJson({ t:"set", telemetry_hz: 10 });        // Ask for 10 Hz telemetry by default
-    telemetryPollLoop();  // Start telemetry polling loop on connect
+
+    // Re-apply the browser's preferred telemetry rate after every
+    // successful connection to the relay.
+    sendJson({ t: "set", telemetry_hz: 10 });
   };
-  ws.onclose = () => {
+
+  socket.onclose = (event) => {
+    if (ws !== socket) return;
+
+    ws = null;
     isConnected = false;
-    setConnStatus("disconnected");
+
+    setConnStatus(
+      `disconnected (${event.code})`
+    );
+
+    scheduleReconnect();
   };
-  ws.onmessage = (evt) => {
-    const m = JSON.parse(evt.data);
-    console.log("WS message received:", m);
-    handleServerMessage(m);
+
+  socket.onerror = () => {
+    // onclose will perform the actual reconnect scheduling.
+    setConnStatus("connection error");
+  };
+
+  socket.onmessage = (evt) => {
+    try {
+      const m = JSON.parse(evt.data);
+      handleServerMessage(m);
+    } catch (err) {
+      console.error("Invalid WebSocket message:", err);
+    }
   };
 }
 
@@ -127,7 +186,16 @@ function sendJson(obj) {
 }
 
 function heartbeatLoop() {
-  if (isConnected) sendJson({ t:"hb" });
+  if (isConnected) {
+    lastHeartbeatId += 1;
+
+    sendJson({
+      t: "hb",
+      id: lastHeartbeatId,
+      ts_ms: Date.now(),
+    });
+  }
+
   setTimeout(heartbeatLoop, HEARTBEAT_PERIOD_MS);
 }
 
@@ -135,8 +203,6 @@ function telemetryPollLoop() {
   const now = performance.now();
 
   if (isConnected) {
-    console.log("Sending svc requests...");
-
     // wheel telemetry (10 Hz)
     sendJson({ t: "svc", name: "wheel_state.poll" });
 
@@ -159,8 +225,6 @@ function cmdLoop() {
       ...dualTeleopCmd 
     };
 
-    console.log("Sending:", payload);
-
     sendJson(payload);
     lastCmdSentMs = now;
   }
@@ -179,6 +243,9 @@ function handleServerMessage(m) {
   if (m.t === "hello") {
     // server greeting with version
   } 
+  else if (m.t === "hb.ack") {
+    return;
+  }
   else if (m.t === "tlm") {
     if (m.mux) setOwner(m.mux);
     if (m.imu && m.imu.rpy) $("#imuRpy").textContent = m.imu.rpy.map(v => v.toFixed(2)).join(", ");
@@ -390,7 +457,12 @@ function main() {
   buildFaultLookupTable();
   bindKeyboardTeleop();
   bindButtons();
+
+  // These loops run exactly once for the lifetime of the page.
+  // They simply stop transmitting while the WebSocket is disconnected,
+  // which prevents duplicate timers after reconnects.
   heartbeatLoop();
+  telemetryPollLoop();
   cmdLoop();
 }
 main();

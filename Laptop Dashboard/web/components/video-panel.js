@@ -1,115 +1,139 @@
-// components/video-panel.js
 class VideoPanel extends HTMLElement {
     async connectedCallback() {
         if (this._rendered) return;
         this._rendered = true;
         this.classList.add('card');
-        this.abortController = new AbortController();
-        await this.loadJMuxer();
         
         // Use a flex container to place the two video streams side-by-side
         this.innerHTML = `
-            <h3>Live Video (H.264)</h3>
+            <h3>Live Video (WebRTC)</h3>
             <div style="display: flex; gap: 10px; width: 100%;">
                 <div style="position: relative; flex: 1; height: 240px; background: #000;">
-                    <video id="h264-player-1" autoplay muted playsinline 
+                    <video id="webrtc-player-1" autoplay muted playsinline 
                            style="width: 100%; height: 100%; object-fit: contain;"></video>
                     <div id="videoStats-1" style="position: absolute; top: 5px; left: 5px; color: #0f0; background: rgba(0,0,0,0.5); padding: 2px;">Connecting...</div>
                 </div>
                 
                 <div style="position: relative; flex: 1; height: 240px; background: #000;">
-                    <video id="h264-player-2" autoplay muted playsinline 
+                    <video id="webrtc-player-2" autoplay muted playsinline 
                            style="width: 100%; height: 100%; object-fit: contain;"></video>
                     <div id="videoStats-2" style="position: absolute; top: 5px; left: 5px; color: #0f0; background: rgba(0,0,0,0.5); padding: 2px;">Connecting...</div>
                 </div>
             </div>
         `;
         
-        // Store multiple jmuxer instances by ID
-        this.jmuxers = {};
+        // Store RTCPeerConnection instances to manage lifecycles
+        this.peerConnections = {};
         
-        // Start both streams dynamically
-        // Note: Make sure the IP matches your actual robot IP!
-        // Pi Tailscale IP 100.97.255.110
-        // Pi router IP 192.168.1.50
-        const host = "192.168.1.50:9002";
-        this.startStreaming('1', `http://${host}/video/1.h264`);
-        this.startStreaming('2', `http://${host}/video/2.h264`);
+        // Note: Update these paths to match your exact MediaMTX stream names!
+        // MediaMTX uses the /whep endpoint for WebRTC signaling.
+        //100.97.255.110 
+        const host = "100.97.255.110:8889"; 
+        this.startStreaming('1', `http://${host}/rover_video_1/whep`);
+        this.startStreaming('2', `http://${host}/rover_video_2/whep`);
     }
 
-    loadJMuxer() {
-        return new Promise((resolve) => {
-            if (window.JMuxer) return resolve();
-            const script = document.createElement('script');
-            script.src = "./components/jmuxer.js";
-            script.onload = resolve;
-            document.head.appendChild(script);
-        });
-    }
+async startStreaming(streamId, url) {
+        const videoElement = this.querySelector(`#webrtc-player-${streamId}`);
+        const statsUI = this.querySelector(`#videoStats-${streamId}`);
 
-    async startStreaming(streamId, url) {
-        const videoElement = this.querySelector(`#h264-player-${streamId}`);
-        const stats = this.querySelector(`#videoStats-${streamId}`);
+        if (this.peerConnections[streamId]) {
+            this.peerConnections[streamId].close();
+        }
 
-        if (this.jmuxers[streamId]) this.jmuxers[streamId].destroy();
+        const pc = new RTCPeerConnection();
+        this.peerConnections[streamId] = pc;
 
-        this.jmuxers[streamId] = new JMuxer({
-            node: videoElement,
-            mode: 'video',
-            flushingTime: 0,
-            maxDelay: 0,
-            clearBuffer: true,
-            fps: 30,
-            debug: false,
-            onError: (e) => {
-                if (/SourceBuffer/.test(e.toString()) || /InvalidState/.test(e.toString())) {
-                    console.warn(`Buffer Crash on Stream ${streamId} - Restarting...`);
-                    this.restartStream(streamId, url);
-                }
+        pc.addTransceiver('video', { direction: 'recvonly' });
+
+        pc.ontrack = (event) => {
+            videoElement.srcObject = event.streams[0];
+        };
+
+        pc.onconnectionstatechange = () => {
+            if (pc.connectionState === 'connected') {
+                statsUI.innerText = `Cam ${streamId}: Live`;
+            } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                statsUI.innerText = `Cam ${streamId}: Disconnected`;
+                setTimeout(() => this.startStreaming(streamId, url), 2000);
+            } else {
+                statsUI.innerText = `Cam ${streamId}: ${pc.connectionState}...`;
             }
+        };
+
+        // Latency & Network Polling
+        let lastRtt = "0"; // Store RTT outside the loop to remember it between updates
+
+        const statsInterval = setInterval(async () => {
+            if (pc.connectionState !== 'connected') return;
+            
+            try {
+                const rtcStats = await pc.getStats();
+                let jitter = "0";
+                let fps = 0;
+
+                rtcStats.forEach(report => {
+                    // Update RTT only if the browser actually performed a ping this cycle
+                    if (report.type === 'candidate-pair' && report.state === 'succeeded') {
+                        if (report.currentRoundTripTime !== undefined) {
+                            lastRtt = (report.currentRoundTripTime * 1000).toFixed(0);
+                        }
+                    }
+                    // Update Jitter and FPS (these update continuously based on video packets)
+                    if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                        if (report.jitter !== undefined) {
+                            jitter = (report.jitter * 1000).toFixed(0);
+                        }
+                        fps = report.framesPerSecond || 0;
+                    }
+                });
+
+                if (fps > 0 || lastRtt > 0) {
+                    statsUI.innerText = `Cam ${streamId} | RTT: ${lastRtt}ms | Jit: ${jitter}ms | ${fps} FPS`;
+                }
+            } catch (e) {
+                console.warn(`Stats error on Cam ${streamId}:`, e);
+            }
+        }, 1000);
+
+        // Clear interval if connection closes to prevent memory leaks
+        pc.addEventListener('signalingstatechange', () => {
+            if (pc.signalingState === 'closed') clearInterval(statsInterval);
         });
 
         try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
             const response = await fetch(url, {
-                signal: this.abortController.signal
+                method: 'POST',
+                headers: { 'Content-Type': 'application/sdp' },
+                body: offer.sdp
             });
-            
-            const reader = response.body.getReader();
-            stats.innerText = `Cam ${streamId}: Syncing...`;
 
-            let packetCount = 0;
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                
-                if (packetCount === 0) stats.innerText = `Cam ${streamId}: Live`;
-                this.jmuxers[streamId].feed({ video: value });
-                packetCount++;
-            }
+            if (!response.ok) throw new Error("MediaMTX rejected the WebRTC offer");
+
+            const answerSdp = await response.text();
+            await pc.setRemoteDescription({
+                type: 'answer',
+                sdp: answerSdp
+            });
+
         } catch (err) {
-            if (err.name !== 'AbortError') {
-                stats.innerText = `Cam ${streamId}: Retry...`;
-                setTimeout(() => this.startStreaming(streamId, url), 1000);
-            }
+            console.warn(`Stream ${streamId} failed to connect:`, err);
+            statsUI.innerText = `Cam ${streamId}: Retry...`;
+            setTimeout(() => this.startStreaming(streamId, url), 2000);
         }
-    }
-
-    restartStream(streamId, url) {
-        if (this.jmuxers[streamId]) {
-            this.jmuxers[streamId].destroy();
-            this.jmuxers[streamId] = null;
-        }
-        setTimeout(() => this.startStreaming(streamId, url), 200);
     }
 
     disconnectedCallback() {
-        this.abortController.abort();
-        for (let id in this.jmuxers) {
-            if (this.jmuxers[id]) {
-                this.jmuxers[id].destroy();
+        // Cleanly close all WebRTC connections when the component is removed
+        for (let id in this.peerConnections) {
+            if (this.peerConnections[id]) {
+                this.peerConnections[id].close();
             }
         }
-        this.jmuxers = {};
+        this.peerConnections = {};
     }
 }
 customElements.define('video-panel', VideoPanel);
