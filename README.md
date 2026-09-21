@@ -12,33 +12,6 @@ It is designed for low-latency teleoperation, clear system visibility, and robus
 
 ---
 
-## High-Level Architecture
-
-<pre>
-┌────────────┐     WebSocket (/ws)          ┌──────────────┐
-│ Browser    │ ◀────────────────────────▶  │    Laptop    │
-│ Dashboard  │                              │    Driver    │
-│ (UI + JS)  │     HTTP (/video.mjpg)       │    Station   |
-└────────────┘ ◀────────────────────────▶  │    Server    │
-                                            │   (app.py)   │
-                                            └──────▲───────┘
-                                                   │ WS
-                                                   │
-                                             ┌─────┴─────┐
-                                             │ Rover Pi  │
-                                             │ (ROS2 +   │
-                                             │ MJPEG)    │
-                                             └───────────┘
-</pre>
-
-**Key rule:**
-
-- Browsers only connect to the laptop
-- The Pi only connects to the laptop
-- The laptop is the _single authority_ for routing, muxing, and visibility
-
----
-
 ## Responsibilities by Layer
 
 ### Laptop (Driver Station Server)
