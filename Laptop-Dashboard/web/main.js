@@ -1,14 +1,14 @@
 // Entry script for the web application
 
-import './components/connection-bar.js';
-import './components/video-panel.js';
-import './components/estop-panel.js';
-import './components/telemetry-panel.js';
-import './components/queue-panel.js';
-import './components/controller-panel.js';
-import './components/rover-visual-panel.js';
-import './components/bandwidth-panel.js';
-import './components/arena-panel.js';
+import './components/connection-bar.js?v=20260922';
+import './components/video-panel.js?v=20260922';
+import './components/estop-panel.js?v=20260922';
+import './components/telemetry-panel.js?v=20260922';
+import './components/queue-panel.js?v=20260922';
+import './components/controller-panel.js?v=20260922';
+import './components/rover-visual-panel.js?v=20260922';
+import './components/bandwidth-panel.js?v=20260922';
+import './components/arena-panel.js?v=20260922';
 
-import './app.js';
-import './gamepad.js';
+import './app.js?v=20260922';
+import './gamepad.js?v=20260922';

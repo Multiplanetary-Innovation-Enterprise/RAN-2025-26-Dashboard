@@ -148,17 +148,24 @@ function closePeerConnection() {
 }
 
 function markConnectionState() {
-  const ready =
-    pc &&
-    pc.connectionState === "connected" &&
-    cmdChannel &&
-    cmdChannel.readyState === "open" &&
-    telemetryChannel &&
-    telemetryChannel.readyState === "open" &&
-    controlChannel &&
-    controlChannel.readyState === "open" &&
-    heartbeatChannel &&
-    heartbeatChannel.readyState === "open";
+  const peerConnected = pc && pc.connectionState === "connected";
+  const cmdOpen = cmdChannel && cmdChannel.readyState === "open";
+  const controlOpen = controlChannel && controlChannel.readyState === "open";
+  const telemetryOpen = telemetryChannel && telemetryChannel.readyState === "open";
+  const heartbeatOpen = heartbeatChannel && heartbeatChannel.readyState === "open";
+
+  console.log(
+    `[WebRTC] status: peer=${peerConnected ? "connected" : (pc?.connectionState ?? "none")} ` +
+    `cmd=${cmdChannel?.readyState ?? "none"} ` +
+    `control=${controlChannel?.readyState ?? "none"} ` +
+    `telemetry=${telemetryChannel?.readyState ?? "none"} ` +
+    `heartbeat=${heartbeatChannel?.readyState ?? "none"}`
+  );
+
+  // The rover control path is ready once the peer, command, and control
+  // channels are established. Telemetry/heartbeat are independent streams
+  // and must not prevent teleoperation from becoming available.
+  const ready = peerConnected && cmdOpen && controlOpen;
 
   if (ready) {
     if (!isConnected) {
@@ -167,13 +174,24 @@ function markConnectionState() {
       setConnStatus("connected");
 
       sendJson({
+        t: "hello",
+        ver: "0.3",
+        client: "browser",
+      });
+
+      sendJson({
         t: "set",
         telemetry_hz: 10,
       });
     }
-  } else if (isConnected) {
-    isConnected = false;
-    setConnStatus("transport degraded");
+    return;
+  }
+
+  if (peerConnected) {
+    setConnStatus(
+      `connecting (cmd ${cmdChannel?.readyState ?? "?"}, ` +
+      `control ${controlChannel?.readyState ?? "?"})`
+    );
   }
 }
 
@@ -395,6 +413,23 @@ async function connectWebRTC() {
     });
 
     console.log("[WebRTC] signaling complete.");
+
+    // Do not leave the UI indefinitely in "connecting" if the browser-side
+    // SCTP/DataChannel handshake does not finish.
+    setTimeout(() => {
+      if (pc === peer && !isConnected) {
+        console.error(
+          "[WebRTC] browser DataChannel handshake timeout:",
+          peer.connectionState,
+          {
+            cmd: cmdChannel?.readyState,
+            control: controlChannel?.readyState,
+            telemetry: telemetryChannel?.readyState,
+            heartbeat: heartbeatChannel?.readyState,
+          }
+        );
+      }
+    }, 10000);
   } catch (err) {
     console.error(
       "[WebRTC] connection setup failed:",

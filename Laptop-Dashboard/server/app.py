@@ -105,6 +105,17 @@ class StaticRequestHandler(SimpleHTTPRequestHandler):
         # Keep the console focused on rover/network diagnostics.
         pass
 
+    def do_GET(self):
+        # Static JS must not be cached while the dashboard is under active
+        # development/migration; otherwise an old app.js can survive a server
+        # restart and make the UI appear stuck in the previous state.
+        super().do_GET()
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        super().end_headers()
+
     def _send_json(self, status: int, payload: dict) -> None:
         body = _json_bytes(payload)
 
@@ -564,6 +575,27 @@ class DriverStationServer:
             )
             return
 
+        if msg_type == "hello":
+            self._send_browser_direct(
+                browser_id,
+                {
+                    "t": "hello.ack",
+                    "ver": PROTOCOL_VERSION,
+                    "server": "laptop",
+                    "caps": [
+                        "teleop",
+                        "queue",
+                        "estop",
+                        "webrtc_datachannels",
+                    ],
+                },
+                "control",
+            )
+            print(
+                f"[Laptop] Browser {browser_id[:8]} application handshake received."
+            )
+            return
+
         if msg_type == "hb":
             self._send_pi(
                 {
@@ -604,6 +636,27 @@ class DriverStationServer:
             return
 
         msg_type = msg.get("t")
+
+        if msg_type == "hello":
+            self._send_browser_direct(
+                browser_id,
+                {
+                    "t": "hello.ack",
+                    "ver": PROTOCOL_VERSION,
+                    "server": "laptop",
+                    "caps": [
+                        "teleop",
+                        "queue",
+                        "estop",
+                        "webrtc_datachannels",
+                    ],
+                },
+                "control",
+            )
+            print(
+                f"[Laptop] Browser {browser_id[:8]} application handshake received."
+            )
+            return
 
         if msg_type == "hb":
             self._send_browser_direct(
