@@ -35,6 +35,8 @@ from urllib.parse import urlsplit
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
+from aiortc import RTCPeerConnection, RTCSessionDescription
+
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "web"
@@ -47,8 +49,8 @@ WS_PORT = 8766
 WS_PATH = "/ws"
 
 MAX_WS_MESSAGE_SIZE = 256 * 1024
-PING_INTERVAL = 20
-PING_TIMEOUT = 15
+PING_INTERVAL = 5
+PING_TIMEOUT = 2
 OPEN_TIMEOUT = 5
 CLOSE_TIMEOUT = 5
 
@@ -81,6 +83,13 @@ class DriverStationServer:
         # websocket -> asyncio.Queue[str]
         self.browser_queues: dict = {}
         self.browser_writer_tasks: dict = {}
+
+        # WebRTC PeerConnection to the Pi and its unordered/unreliable
+        # "cmd" data channel. Signaling rides over the Pi WebSocket above.
+        # Falls back to that WebSocket whenever the channel isn't open, so
+        # this is purely additive -- nothing breaks if negotiation fails.
+        self.pi_pc: RTCPeerConnection | None = None
+        self.pi_cmd_channel = None
 
     # ------------------------------------------------------------
     # Browser connection management
@@ -179,6 +188,120 @@ class DriverStationServer:
 
                 if self.pi_ws is pi:
                     self.pi_ws = None
+
+    async def _send_pi_cmd(self, data: str) -> None:
+        """
+        Send a "cmd" message to the Pi, preferring the unordered/unreliable
+        WebRTC channel so a lost drive command doesn't stall behind a TCP
+        retransmit. Falls back to the plain WebSocket whenever the channel
+        isn't open (startup, still negotiating, negotiation failed, etc.).
+        """
+        channel = self.pi_cmd_channel
+        if channel is not None and channel.readyState == "open":
+            try:
+                channel.send(data)
+                return
+            except Exception as e:
+                print(
+                    f"[Laptop] 'cmd' data channel send failed, "
+                    f"falling back to WebSocket: "
+                    f"{type(e).__name__}: {e}"
+                )
+
+        await self._send_pi(data)
+
+    # ------------------------------------------------------------
+    # WebRTC (Pi "cmd" data channel)
+    # ------------------------------------------------------------
+
+    async def _handle_pi_webrtc_offer(self, ws, msg: dict) -> None:
+        """Answer the Pi's WebRTC offer and adopt its 'cmd' data channel."""
+        if self.pi_pc is not None:
+            try:
+                await self.pi_pc.close()
+            except Exception:
+                pass
+            self.pi_pc = None
+            self.pi_cmd_channel = None
+
+        pc = RTCPeerConnection()
+        self.pi_pc = pc
+
+        @pc.on("datachannel")
+        def _on_datachannel(channel):
+            if channel.label != "cmd":
+                return
+
+            self.pi_cmd_channel = channel
+
+            @channel.on("open")
+            def _on_open():
+                print("[Laptop] WebRTC 'cmd' data channel open.")
+
+            @channel.on("close")
+            def _on_close():
+                print("[Laptop] WebRTC 'cmd' data channel closed.")
+                if self.pi_cmd_channel is channel:
+                    self.pi_cmd_channel = None
+
+        try:
+            await pc.setRemoteDescription(
+                RTCSessionDescription(
+                    sdp=msg.get("sdp", ""),
+                    type=msg.get("sdp_type", "offer"),
+                )
+            )
+
+            answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
+            await self._wait_ice_gathering_complete(pc)
+
+            await ws.send(
+                json.dumps(
+                    {
+                        "t": "webrtc.answer",
+                        "sdp": pc.localDescription.sdp,
+                        "sdp_type": pc.localDescription.type,
+                    },
+                    separators=(",", ":"),
+                )
+            )
+
+        except Exception as e:
+            print(
+                f"[Laptop] WebRTC negotiation with Pi failed: "
+                f"{type(e).__name__}: {e}. "
+                f"'cmd' will stay on the WebSocket this session."
+            )
+
+    async def _wait_ice_gathering_complete(self, pc: RTCPeerConnection) -> None:
+        if pc.iceGatheringState == "complete":
+            return
+
+        done = asyncio.Event()
+
+        @pc.on("icegatheringstatechange")
+        def _on_state_change():
+            if pc.iceGatheringState == "complete":
+                done.set()
+
+        try:
+            await asyncio.wait_for(done.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            print(
+                "[Laptop] ICE gathering timed out; "
+                "sending answer with candidates gathered so far."
+            )
+
+    async def _close_pi_webrtc(self) -> None:
+        self.pi_cmd_channel = None
+
+        if self.pi_pc is not None:
+            try:
+                await self.pi_pc.close()
+            except Exception:
+                pass
+            self.pi_pc = None
 
     # ------------------------------------------------------------
     # Broadcast helpers
@@ -292,6 +415,10 @@ class DriverStationServer:
                 # Pi messages
                 # ------------------------------------------------
                 if role == "pi":
+                    if msg_type == "webrtc.offer":
+                        await self._handle_pi_webrtc_offer(ws, msg)
+                        continue
+
                     if msg_type == "hb":
                         # The server itself acknowledges the Pi heartbeat.
                         # This keeps RTT measurement independent of browsers.
@@ -340,8 +467,14 @@ class DriverStationServer:
                         continue
 
                     # Forward all other browser protocol messages to Pi.
+                    # "cmd" prefers the unordered/unreliable WebRTC channel;
+                    # everything else (estop, queue.*, mux.request) stays
+                    # on the ordered/reliable WebSocket on purpose.
                     if self.pi_ws is not None:
-                        await self._send_pi(message)
+                        if msg_type == "cmd":
+                            await self._send_pi_cmd(message)
+                        else:
+                            await self._send_pi(message)
                     elif msg_type in (
                         "cmd",
                         "estop",
@@ -387,6 +520,7 @@ class DriverStationServer:
                 # connection. A stale connection must never clear a newer one.
                 if self.pi_ws is ws:
                     self.pi_ws = None
+                    await self._close_pi_webrtc()
 
                     print(
                         f"[Laptop] Pi disconnected: remote={remote}"
@@ -406,6 +540,8 @@ class DriverStationServer:
 
     async def close(self) -> None:
         """Close tracked WebSocket connections."""
+        await self._close_pi_webrtc()
+
         if self.pi_ws is not None:
             try:
                 await self.pi_ws.close(
