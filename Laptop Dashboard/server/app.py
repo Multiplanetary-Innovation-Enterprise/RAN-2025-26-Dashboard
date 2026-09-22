@@ -1,20 +1,20 @@
 """
-server/app.py — Driver Station HTTP + WebSocket Relay
+server/app.py — Driver Station HTTP + WebRTC relay
 
-The laptop hosts two lightweight services:
+The laptop hosts one lightweight HTTP service:
 
   HTTP server (port 8765)
-    - Serves the dashboard UI and static assets.
+    - Serves the dashboard UI.
+    - Handles WebRTC SDP signaling for the browser and rover Pi.
 
-  WebSocket server (port 8766)
-    - Accepts the rover Pi connection.
-    - Accepts browser connections.
-    - Relays browser control messages to the Pi.
-    - Relays Pi telemetry/events to browsers.
-    - Handles application heartbeats directly.
+All application data between browser and rover is transported over
+WebRTC DataChannels. No WebSocket application transport is used.
 
-Video is no longer proxied by the laptop. The dashboard uses the Pi's
-H.264 stream directly, so the old MJPEG proxy has been removed.
+DataChannels:
+  cmd        - unordered / unreliable; browser -> Pi teleop commands
+  telemetry  - unordered / unreliable; Pi -> browser telemetry
+  control    - ordered / reliable; e-stop, queue, mux, configuration, alerts
+  heartbeat  - unordered / unreliable; application heartbeat / RTT
 
 Run:
     python server/app.py
@@ -29,11 +29,11 @@ import asyncio
 import json
 import pathlib
 import threading
+import uuid
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
-
-from websockets.asyncio.server import serve
-from websockets.exceptions import ConnectionClosed
 
 from aiortc import RTCPeerConnection, RTCSessionDescription
 
@@ -44,237 +44,177 @@ STATIC_DIR = ROOT_DIR / "web"
 HTTP_HOST = "0.0.0.0"
 HTTP_PORT = 8765
 
-WS_HOST = "0.0.0.0"
-WS_PORT = 8766
-WS_PATH = "/ws"
+PI_OFFER_PATH = "/api/webrtc/pi/offer"
+BROWSER_OFFER_PATH = "/api/webrtc/browser/offer"
 
-MAX_WS_MESSAGE_SIZE = 256 * 1024
-PING_INTERVAL = 5
-PING_TIMEOUT = 2
-OPEN_TIMEOUT = 5
-CLOSE_TIMEOUT = 5
+MAX_HTTP_BODY = 512 * 1024
+OFFER_TIMEOUT_S = 20.0
+CLOSE_TIMEOUT_S = 5.0
+
+PROTOCOL_VERSION = "0.3"
+
+CONTROL_TYPES = {
+    "hello",
+    "hello.ack",
+    "estop",
+    "set",
+    "mux.request",
+    "mux.state",
+    "queue.drive",
+    "queue.cancel",
+    "queue.state",
+    "queue.result",
+    "alert",
+}
+
+TELEMETRY_TYPES = {"tlm"}
+
+HEARTBEAT_TYPES = {"hb", "hb.ack"}
+
+
+def _json_bytes(obj: dict) -> bytes:
+    return json.dumps(obj, separators=(",", ":")).encode("utf-8")
+
+
+def _decode_json(data) -> dict | None:
+    if isinstance(data, bytes):
+        try:
+            data = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+
+    if not isinstance(data, str):
+        return None
+
+    try:
+        obj = json.loads(data)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    return obj if isinstance(obj, dict) else None
 
 
 class StaticRequestHandler(SimpleHTTPRequestHandler):
-    """Serve dashboard files from the web directory."""
+    """Serve dashboard files and the WebRTC signaling POST endpoints."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, app=None, **kwargs):
+        self.app = app
         super().__init__(*args, directory=str(STATIC_DIR), **kwargs)
 
     def log_message(self, fmt, *args):
-        # Keep the dashboard console readable. WebSocket diagnostics are
-        # logged separately below.
+        # Keep the console focused on rover/network diagnostics.
         pass
+
+    def _send_json(self, status: int, payload: dict) -> None:
+        body = _json_bytes(payload)
+
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_json_body(self) -> dict | None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            return None
+
+        if length <= 0 or length > MAX_HTTP_BODY:
+            return None
+
+        body = self.rfile.read(length)
+        return _decode_json(body)
+
+    def do_POST(self):
+        path = urlsplit(self.path).path
+
+        if path not in (PI_OFFER_PATH, BROWSER_OFFER_PATH):
+            self.send_error(404)
+            return
+
+        if self.app is None or self.app.loop is None:
+            self._send_json(
+                503,
+                {
+                    "ok": False,
+                    "error": "server event loop is not ready",
+                },
+            )
+            return
+
+        msg = self._read_json_body()
+        if msg is None:
+            self._send_json(
+                400,
+                {
+                    "ok": False,
+                    "error": "invalid JSON request body",
+                },
+            )
+            return
+
+        role = "pi" if path == PI_OFFER_PATH else "browser"
+
+        future = asyncio.run_coroutine_threadsafe(
+            self.app.relay.handle_offer(role, msg),
+            self.app.loop,
+        )
+
+        try:
+            result = future.result(timeout=OFFER_TIMEOUT_S)
+        except FutureTimeoutError:
+            future.cancel()
+            self._send_json(
+                504,
+                {
+                    "ok": False,
+                    "error": "WebRTC negotiation timed out",
+                },
+            )
+            return
+        except Exception as e:
+            self._send_json(
+                500,
+                {
+                    "ok": False,
+                    "error": f"{type(e).__name__}: {e}",
+                },
+            )
+            return
+
+        self._send_json(200, result)
 
 
 class DriverStationServer:
     """
-    Owns the WebSocket relay state.
+    Relays application data between browser WebRTC peers and the rover Pi.
 
-    A connection is classified as Pi or browser from its first application
-    message. Browser output uses a small per-browser queue so a slow browser
-    cannot directly block the Pi relay path.
+    There is no WebSocket state. The HTTP endpoints above are only used for
+    initial SDP signaling; once the peers are established, application data
+    uses WebRTC DataChannels.
     """
 
     def __init__(self):
-        self.pi_ws = None
-        self.pi_send_lock = asyncio.Lock()
-
-        # websocket -> asyncio.Queue[str]
-        self.browser_queues: dict = {}
-        self.browser_writer_tasks: dict = {}
-
-        # WebRTC PeerConnection to the Pi and its unordered/unreliable
-        # "cmd" data channel. Signaling rides over the Pi WebSocket above.
-        # Falls back to that WebSocket whenever the channel isn't open, so
-        # this is purely additive -- nothing breaks if negotiation fails.
         self.pi_pc: RTCPeerConnection | None = None
-        self.pi_cmd_channel = None
+        self.pi_channels: dict[str, object] = {}
+
+        # browser_id -> PeerConnection
+        self.browser_pcs: dict[str, RTCPeerConnection] = {}
+        # browser_id -> {"cmd": channel, "telemetry": channel, ...}
+        self.browser_channels: dict[str, dict[str, object]] = {}
+
+        self._pc_lock = asyncio.Lock()
 
     # ------------------------------------------------------------
-    # Browser connection management
+    # WebRTC helpers
     # ------------------------------------------------------------
 
-    async def add_browser(self, ws) -> None:
-        queue = asyncio.Queue(maxsize=32)
-        self.browser_queues[ws] = queue
-        self.browser_writer_tasks[ws] = asyncio.create_task(
-            self._browser_writer(ws, queue)
-        )
-
-    async def remove_browser(self, ws) -> None:
-        self.browser_queues.pop(ws, None)
-
-        writer = self.browser_writer_tasks.pop(ws, None)
-        if writer is not None:
-            writer.cancel()
-            await asyncio.gather(writer, return_exceptions=True)
-
-    async def _browser_writer(self, ws, queue: asyncio.Queue) -> None:
-        """Serialize writes to one browser WebSocket."""
-        try:
-            while True:
-                data = await queue.get()
-                await ws.send(data)
-
-        except asyncio.CancelledError:
-            raise
-
-        except ConnectionClosed:
-            pass
-
-        except Exception as e:
-            print(
-                f"[Laptop] Browser writer error: "
-                f"{type(e).__name__}: {e}"
-            )
-
-    def _queue_browser_message(self, ws, data: str) -> None:
-        """
-        Queue a browser message without awaiting the network write.
-
-        The queue is intentionally bounded. If a browser falls behind,
-        dropping a telemetry message is preferable to allowing that browser
-        to create unbounded memory usage or stall the Pi relay.
-        """
-        queue = self.browser_queues.get(ws)
-        if queue is None:
-            return
-
-        try:
-            queue.put_nowait(data)
-        except asyncio.QueueFull:
-            # Drop the newest low-priority/broadcast message when the browser
-            # can't keep up. Control acknowledgements have a separate direct
-            # path below.
-            pass
-
-    async def _send_browser_direct(self, ws, data: str) -> None:
-        """Send an immediate browser response such as heartbeat ACK."""
-        queue = self.browser_queues.get(ws)
-        if queue is None:
-            return
-
-        # For an ACK / warning, make room if necessary. The queue is bounded
-        # so this cannot grow indefinitely.
-        while True:
-            try:
-                queue.put_nowait(data)
-                return
-            except asyncio.QueueFull:
-                try:
-                    queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    return
-
-    # ------------------------------------------------------------
-    # Pi connection management
-    # ------------------------------------------------------------
-
-    async def _send_pi(self, data: str) -> None:
-        """Serialize writes to the single Pi WebSocket."""
-        pi = self.pi_ws
-        if pi is None:
-            return
-
-        async with self.pi_send_lock:
-            try:
-                await pi.send(data)
-            except ConnectionClosed as e:
-                print(
-                    f"[Laptop] Pi send failed: "
-                    f"code={e.code}, reason={e.reason}"
-                )
-
-                if self.pi_ws is pi:
-                    self.pi_ws = None
-
-    async def _send_pi_cmd(self, data: str) -> None:
-        """
-        Send a "cmd" message to the Pi, preferring the unordered/unreliable
-        WebRTC channel so a lost drive command doesn't stall behind a TCP
-        retransmit. Falls back to the plain WebSocket whenever the channel
-        isn't open (startup, still negotiating, negotiation failed, etc.).
-        """
-        channel = self.pi_cmd_channel
-        if channel is not None and channel.readyState == "open":
-            try:
-                channel.send(data)
-                return
-            except Exception as e:
-                print(
-                    f"[Laptop] 'cmd' data channel send failed, "
-                    f"falling back to WebSocket: "
-                    f"{type(e).__name__}: {e}"
-                )
-
-        await self._send_pi(data)
-
-    # ------------------------------------------------------------
-    # WebRTC (Pi "cmd" data channel)
-    # ------------------------------------------------------------
-
-    async def _handle_pi_webrtc_offer(self, ws, msg: dict) -> None:
-        """Answer the Pi's WebRTC offer and adopt its 'cmd' data channel."""
-        if self.pi_pc is not None:
-            try:
-                await self.pi_pc.close()
-            except Exception:
-                pass
-            self.pi_pc = None
-            self.pi_cmd_channel = None
-
-        pc = RTCPeerConnection()
-        self.pi_pc = pc
-
-        @pc.on("datachannel")
-        def _on_datachannel(channel):
-            if channel.label != "cmd":
-                return
-
-            self.pi_cmd_channel = channel
-
-            @channel.on("open")
-            def _on_open():
-                print("[Laptop] WebRTC 'cmd' data channel open.")
-
-            @channel.on("close")
-            def _on_close():
-                print("[Laptop] WebRTC 'cmd' data channel closed.")
-                if self.pi_cmd_channel is channel:
-                    self.pi_cmd_channel = None
-
-        try:
-            await pc.setRemoteDescription(
-                RTCSessionDescription(
-                    sdp=msg.get("sdp", ""),
-                    type=msg.get("sdp_type", "offer"),
-                )
-            )
-
-            answer = await pc.createAnswer()
-            await pc.setLocalDescription(answer)
-            await self._wait_ice_gathering_complete(pc)
-
-            await ws.send(
-                json.dumps(
-                    {
-                        "t": "webrtc.answer",
-                        "sdp": pc.localDescription.sdp,
-                        "sdp_type": pc.localDescription.type,
-                    },
-                    separators=(",", ":"),
-                )
-            )
-
-        except Exception as e:
-            print(
-                f"[Laptop] WebRTC negotiation with Pi failed: "
-                f"{type(e).__name__}: {e}. "
-                f"'cmd' will stay on the WebSocket this session."
-            )
-
-    async def _wait_ice_gathering_complete(self, pc: RTCPeerConnection) -> None:
+    async def _wait_ice_gathering_complete(
+        self,
+        pc: RTCPeerConnection,
+    ) -> None:
         if pc.iceGatheringState == "complete":
             return
 
@@ -290,293 +230,578 @@ class DriverStationServer:
         except asyncio.TimeoutError:
             print(
                 "[Laptop] ICE gathering timed out; "
-                "sending answer with candidates gathered so far."
+                "using candidates gathered so far."
             )
 
-    async def _close_pi_webrtc(self) -> None:
-        self.pi_cmd_channel = None
+    async def handle_offer(self, role: str, msg: dict) -> dict:
+        """Create and return a WebRTC SDP answer for a Pi or browser offer."""
+        if role not in ("pi", "browser"):
+            raise ValueError(f"invalid WebRTC role: {role}")
 
+        sdp = msg.get("sdp")
+        sdp_type = msg.get("sdp_type", "offer")
+
+        if not isinstance(sdp, str) or not sdp:
+            raise ValueError("offer is missing SDP")
+
+        async with self._pc_lock:
+            if role == "pi":
+                return await self._handle_pi_offer(sdp, sdp_type)
+
+            browser_id = str(uuid.uuid4())
+            return await self._handle_browser_offer(
+                browser_id,
+                sdp,
+                sdp_type,
+            )
+
+    async def _handle_pi_offer(
+        self,
+        sdp: str,
+        sdp_type: str,
+    ) -> dict:
         if self.pi_pc is not None:
-            try:
-                await self.pi_pc.close()
-            except Exception:
-                pass
-            self.pi_pc = None
+            await self._cleanup_pi(
+                self.pi_pc,
+                announce=False,
+            )
 
-    # ------------------------------------------------------------
-    # Broadcast helpers
-    # ------------------------------------------------------------
+        pc = RTCPeerConnection()
+        self.pi_pc = pc
+        self.pi_channels = {}
 
-    def _broadcast_raw(self, data: str) -> None:
-        """Queue a message for all browsers without awaiting their sockets."""
-        for browser in list(self.browser_queues):
-            self._queue_browser_message(browser, data)
+        @pc.on("datachannel")
+        def _on_datachannel(channel):
+            label = channel.label
 
-    def _broadcast(self, obj: dict) -> None:
-        self._broadcast_raw(
-            json.dumps(obj, separators=(",", ":"))
+            if label not in {
+                "cmd",
+                "telemetry",
+                "control",
+                "heartbeat",
+            }:
+                print(
+                    f"[Laptop] Ignoring unknown Pi DataChannel: {label}"
+                )
+                return
+
+            self.pi_channels[label] = channel
+
+            @channel.on("open")
+            def _on_open():
+                print(
+                    f"[Laptop] Pi DataChannel open: {label}"
+                )
+
+            @channel.on("close")
+            def _on_close():
+                print(
+                    f"[Laptop] Pi DataChannel closed: {label}"
+                )
+                if self.pi_channels.get(label) is channel:
+                    self.pi_channels.pop(label, None)
+
+            @channel.on("message")
+            def _on_message(data):
+                asyncio.create_task(
+                    self._handle_pi_data(
+                        label,
+                        data,
+                    )
+                )
+
+        @pc.on("connectionstatechange")
+        def _on_connection_state_change():
+            state = pc.connectionState
+            print(f"[Laptop] Pi WebRTC state: {state}")
+
+            if state in {"failed", "closed"}:
+                asyncio.create_task(
+                    self._cleanup_pi(
+                        pc,
+                        announce=True,
+                    )
+                )
+
+        await pc.setRemoteDescription(
+            RTCSessionDescription(
+                sdp=sdp,
+                type=sdp_type,
+            )
         )
 
+        answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        await self._wait_ice_gathering_complete(pc)
+
+        print("[Laptop] Pi WebRTC negotiation complete.")
+
+        return {
+            "ok": True,
+            "sdp": pc.localDescription.sdp,
+            "sdp_type": pc.localDescription.type,
+            "protocol": PROTOCOL_VERSION,
+        }
+
+    async def _handle_browser_offer(
+        self,
+        browser_id: str,
+        sdp: str,
+        sdp_type: str,
+    ) -> dict:
+        pc = RTCPeerConnection()
+
+        self.browser_pcs[browser_id] = pc
+        self.browser_channels[browser_id] = {}
+
+        @pc.on("datachannel")
+        def _on_datachannel(channel):
+            label = channel.label
+
+            if label not in {
+                "cmd",
+                "telemetry",
+                "control",
+                "heartbeat",
+            }:
+                print(
+                    f"[Laptop] Ignoring unknown browser DataChannel: {label}"
+                )
+                return
+
+            self.browser_channels[browser_id][label] = channel
+
+            @channel.on("open")
+            def _on_open():
+                print(
+                    f"[Laptop] Browser {browser_id[:8]} "
+                    f"DataChannel open: {label}"
+                )
+
+                if label == "control":
+                    self._send_channel(
+                        channel,
+                        {
+                            "t": "hello",
+                            "ver": PROTOCOL_VERSION,
+                            "server": "laptop",
+                            "caps": [
+                                "teleop",
+                                "queue",
+                                "estop",
+                                "video_h264",
+                            ],
+                        },
+                    )
+
+                    if (
+                        self.pi_pc is not None
+                        and self.pi_pc.connectionState == "connected"
+                    ):
+                        self._send_channel(
+                            channel,
+                            {
+                                "t": "alert",
+                                "level": "info",
+                                "msg": "Pi connected",
+                            },
+                        )
+
+            @channel.on("close")
+            def _on_close():
+                print(
+                    f"[Laptop] Browser {browser_id[:8]} "
+                    f"DataChannel closed: {label}"
+                )
+
+                if self.browser_channels.get(browser_id, {}).get(label) is channel:
+                    self.browser_channels[browser_id].pop(label, None)
+
+            @channel.on("message")
+            def _on_message(data):
+                asyncio.create_task(
+                    self._handle_browser_data(
+                        browser_id,
+                        label,
+                        data,
+                    )
+                )
+
+        @pc.on("connectionstatechange")
+        def _on_connection_state_change():
+            state = pc.connectionState
+            print(
+                f"[Laptop] Browser {browser_id[:8]} "
+                f"WebRTC state: {state}"
+            )
+
+            if state in {"failed", "closed"}:
+                asyncio.create_task(
+                    self._cleanup_browser(
+                        browser_id,
+                        pc,
+                    )
+                )
+
+        try:
+            await pc.setRemoteDescription(
+                RTCSessionDescription(
+                    sdp=sdp,
+                    type=sdp_type,
+                )
+            )
+
+            answer = await pc.createAnswer()
+            await pc.setLocalDescription(answer)
+            await self._wait_ice_gathering_complete(pc)
+
+        except Exception:
+            await self._cleanup_browser(
+                browser_id,
+                pc,
+            )
+            raise
+
+        print(
+            f"[Laptop] Browser {browser_id[:8]} "
+            f"WebRTC negotiation complete."
+        )
+
+        return {
+            "ok": True,
+            "id": browser_id,
+            "sdp": pc.localDescription.sdp,
+            "sdp_type": pc.localDescription.type,
+            "protocol": PROTOCOL_VERSION,
+        }
+
     # ------------------------------------------------------------
-    # WebSocket handler
+    # DataChannel send helpers
     # ------------------------------------------------------------
 
-    async def ws_handler(self, ws) -> None:
-        """
-        Handle one Pi or browser WebSocket connection.
-        """
-        request_path = urlsplit(ws.request.path).path
-        if request_path != WS_PATH:
-            await ws.close(
-                code=1008,
-                reason="invalid WebSocket path",
+    @staticmethod
+    def _send_channel(channel, obj: dict) -> bool:
+        if channel is None:
+            return False
+
+        if getattr(channel, "readyState", None) != "open":
+            return False
+
+        try:
+            channel.send(
+                json.dumps(
+                    obj,
+                    separators=(",", ":"),
+                )
+            )
+            return True
+        except Exception as e:
+            print(
+                f"[Laptop] DataChannel send failed: "
+                f"{type(e).__name__}: {e}"
+            )
+            return False
+
+    def _send_pi(self, obj: dict, channel_name: str) -> bool:
+        channel = self.pi_channels.get(channel_name)
+        return self._send_channel(channel, obj)
+
+    def _broadcast(self, obj: dict, channel_name: str) -> None:
+        dead = []
+
+        for browser_id, channels in list(
+            self.browser_channels.items()
+        ):
+            channel = channels.get(channel_name)
+
+            if channel is None:
+                continue
+
+            if not self._send_channel(channel, obj):
+                if (
+                    getattr(channel, "readyState", None)
+                    in {"closed", "closing"}
+                ):
+                    dead.append(browser_id)
+
+        for browser_id in dead:
+            pc = self.browser_pcs.get(browser_id)
+            if pc is not None:
+                asyncio.create_task(
+                    self._cleanup_browser(
+                        browser_id,
+                        pc,
+                    )
+                )
+
+    # ------------------------------------------------------------
+    # Incoming DataChannel routing
+    # ------------------------------------------------------------
+
+    async def _handle_pi_data(
+        self,
+        channel_name: str,
+        data,
+    ) -> None:
+        msg = _decode_json(data)
+        if msg is None:
+            print(
+                f"[Laptop] Invalid Pi JSON on {channel_name}."
             )
             return
 
-        remote = ws.remote_address
-        role = "unknown"
+        msg_type = msg.get("t")
 
-        # Everyone gets the server greeting first.
-        await ws.send(
-            json.dumps(
+        if msg_type == "hello.ack":
+            print("[Laptop] Pi application handshake received.")
+            self._broadcast(
                 {
-                    "t": "hello",
-                    "ver": "0.2",
-                    "server": "laptop",
+                    "t": "alert",
+                    "level": "info",
+                    "msg": "Pi connected",
                 },
-                separators=(",", ":"),
+                "control",
             )
+            return
+
+        if msg_type == "hb":
+            self._send_pi(
+                {
+                    "t": "hb.ack",
+                    "id": msg.get("id"),
+                    "ts_ms": msg.get("ts_ms"),
+                },
+                "heartbeat",
+            )
+            return
+
+        if msg_type == "tlm":
+            self._broadcast(
+                msg,
+                "telemetry",
+            )
+            return
+
+        # Queue results, alerts, mux state, etc. use the reliable channel.
+        self._broadcast(
+            msg,
+            "control",
         )
 
-        try:
-            async for message in ws:
-                if isinstance(message, bytes):
-                    message = message.decode("utf-8")
-
-                try:
-                    msg = json.loads(message)
-                except (json.JSONDecodeError, TypeError):
-                    if role == "browser":
-                        await self._send_browser_direct(
-                            ws,
-                            json.dumps(
-                                {
-                                    "t": "alert",
-                                    "level": "error",
-                                    "msg": "bad JSON",
-                                },
-                                separators=(",", ":"),
-                            ),
-                        )
-                    continue
-
-                msg_type = msg.get("t")
-
-                # ------------------------------------------------
-                # Pi identification
-                # ------------------------------------------------
-                if (
-                    role == "unknown"
-                    and msg_type == "hello.ack"
-                    and msg.get("client") == "pi"
-                ):
-                    role = "pi"
-
-                    old_pi = self.pi_ws
-                    self.pi_ws = ws
-
-                    print(
-                        f"[Laptop] Pi connected (WS) "
-                        f"remote={remote}"
-                    )
-
-                    # If a previous Pi connection still exists, explicitly
-                    # close it. The identity check in finally() prevents that
-                    # old handler from clearing the new connection.
-                    if old_pi is not None and old_pi is not ws:
-                        try:
-                            await old_pi.close(
-                                code=1012,
-                                reason="replaced by new Pi connection",
-                            )
-                        except Exception:
-                            pass
-
-                    self._broadcast(
-                        {
-                            "t": "alert",
-                            "level": "info",
-                            "msg": "Pi connected",
-                        }
-                    )
-                    continue
-
-                # ------------------------------------------------
-                # Pi messages
-                # ------------------------------------------------
-                if role == "pi":
-                    if msg_type == "webrtc.offer":
-                        await self._handle_pi_webrtc_offer(ws, msg)
-                        continue
-
-                    if msg_type == "hb":
-                        # The server itself acknowledges the Pi heartbeat.
-                        # This keeps RTT measurement independent of browsers.
-                        await ws.send(
-                            json.dumps(
-                                {
-                                    "t": "hb.ack",
-                                    "id": msg.get("id"),
-                                    "ts_ms": msg.get("ts_ms"),
-                                },
-                                separators=(",", ":"),
-                            )
-                        )
-                        continue
-
-                    # Telemetry/events are broadcast asynchronously to
-                    # browsers. A slow browser cannot block this handler.
-                    self._broadcast_raw(message)
-                    continue
-
-                # ------------------------------------------------
-                # Browser identification
-                # ------------------------------------------------
-                if role == "unknown":
-                    role = "browser"
-                    await self.add_browser(ws)
-                    print(
-                        f"[Laptop] Browser connected: remote={remote}"
-                    )
-
-                if role == "browser":
-                    # Browser heartbeat is acknowledged locally. The Pi
-                    # doesn't need to know about browser keepalive traffic.
-                    if msg_type == "hb":
-                        await self._send_browser_direct(
-                            ws,
-                            json.dumps(
-                                {
-                                    "t": "hb.ack",
-                                    "id": msg.get("id"),
-                                    "ts_ms": msg.get("ts_ms"),
-                                },
-                                separators=(",", ":"),
-                            ),
-                        )
-                        continue
-
-                    # Forward all other browser protocol messages to Pi.
-                    # "cmd" prefers the unordered/unreliable WebRTC channel;
-                    # everything else (estop, queue.*, mux.request) stays
-                    # on the ordered/reliable WebSocket on purpose.
-                    if self.pi_ws is not None:
-                        if msg_type == "cmd":
-                            await self._send_pi_cmd(message)
-                        else:
-                            await self._send_pi(message)
-                    elif msg_type in (
-                        "cmd",
-                        "estop",
-                        "queue.drive",
-                        "queue.cancel",
-                        "mux.request",
-                    ):
-                        await self._send_browser_direct(
-                            ws,
-                            json.dumps(
-                                {
-                                    "t": "alert",
-                                    "level": "warn",
-                                    "msg": "Pi not connected",
-                                },
-                                separators=(",", ":"),
-                            ),
-                        )
-
-        except ConnectionClosed as e:
-            print(
-                f"[Laptop] WebSocket closed: "
-                f"role={role}, remote={remote}, "
-                f"code={e.code}, reason={e.reason}"
+    async def _handle_browser_data(
+        self,
+        browser_id: str,
+        channel_name: str,
+        data,
+    ) -> None:
+        msg = _decode_json(data)
+        if msg is None:
+            self._send_browser_alert(
+                browser_id,
+                "error",
+                "bad JSON",
             )
+            return
 
-        except Exception as e:
-            print(
-                f"[Laptop] WebSocket error: "
-                f"role={role}, remote=RAN-2025-26-Rover-Code-main-websockets-migrated{remote}, "
-                f"{type(e).__name__}: {e}"
+        msg_type = msg.get("t")
+
+        if msg_type == "hb":
+            self._send_browser_direct(
+                browser_id,
+                {
+                    "t": "hb.ack",
+                    "id": msg.get("id"),
+                    "ts_ms": msg.get("ts_ms"),
+                },
+                "heartbeat",
             )
+            return
 
-        finally:
-            if role == "browser":
-                await self.remove_browser(ws)
-                print(
-                    f"[Laptop] Browser disconnected: remote={remote}"
+        if self.pi_pc is None:
+            if msg_type in {
+                "cmd",
+                "estop",
+                "queue.drive",
+                "queue.cancel",
+                "mux.request",
+                "set",
+            }:
+                self._send_browser_alert(
+                    browser_id,
+                    "warn",
+                    "Pi not connected",
                 )
+            return
 
-            elif role == "pi":
-                # Only clear the Pi reference if this is still the active
-                # connection. A stale connection must never clear a newer one.
-                if self.pi_ws is ws:
-                    self.pi_ws = None
-                    await self._close_pi_webrtc()
+        if msg_type == "cmd":
+            if channel_name != "cmd":
+                self._send_browser_alert(
+                    browser_id,
+                    "error",
+                    "cmd message received on wrong DataChannel",
+                )
+                return
 
-                    print(
-                        f"[Laptop] Pi disconnected: remote={remote}"
-                    )
+            if not self._send_pi(
+                msg,
+                "cmd",
+            ):
+                self._send_browser_alert(
+                    browser_id,
+                    "warn",
+                    "Pi command channel is not open",
+                )
+            return
 
-                    self._broadcast(
-                        {
-                            "t": "alert",
-                            "level": "warn",
-                            "msg": "Pi disconnected",
-                        }
-                    )
+        # All other browser control messages use the reliable control channel.
+        if channel_name != "control":
+            self._send_browser_alert(
+                browser_id,
+                "error",
+                f"{msg_type} message received on wrong DataChannel",
+            )
+            return
+
+        if not self._send_pi(
+            msg,
+            "control",
+        ):
+            self._send_browser_alert(
+                browser_id,
+                "warn",
+                "Pi control channel is not open",
+            )
 
     # ------------------------------------------------------------
-    # Shutdown
+    # Browser direct messages
     # ------------------------------------------------------------
+
+    def _send_browser_direct(
+        self,
+        browser_id: str,
+        obj: dict,
+        channel_name: str,
+    ) -> None:
+        channel = self.browser_channels.get(
+            browser_id,
+            {},
+        ).get(channel_name)
+
+        self._send_channel(
+            channel,
+            obj,
+        )
+
+    def _send_browser_alert(
+        self,
+        browser_id: str,
+        level: str,
+        msg: str,
+    ) -> None:
+        self._send_browser_direct(
+            browser_id,
+            {
+                "t": "alert",
+                "level": level,
+                "msg": msg,
+            },
+            "control",
+        )
+
+    # ------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------
+
+    async def _cleanup_pi(
+        self,
+        pc: RTCPeerConnection,
+        announce: bool,
+    ) -> None:
+        if self.pi_pc is not pc:
+            return
+
+        self.pi_pc = None
+        self.pi_channels = {}
+
+        try:
+            await asyncio.wait_for(
+                pc.close(),
+                timeout=CLOSE_TIMEOUT_S,
+            )
+        except Exception:
+            pass
+
+        print("[Laptop] Pi WebRTC session closed.")
+
+        if announce:
+            self._broadcast(
+                {
+                    "t": "alert",
+                    "level": "warn",
+                    "msg": "Pi disconnected",
+                },
+                "control",
+            )
+
+    async def _cleanup_browser(
+        self,
+        browser_id: str,
+        pc: RTCPeerConnection,
+    ) -> None:
+        if self.browser_pcs.get(browser_id) is not pc:
+            return
+
+        self.browser_pcs.pop(browser_id, None)
+        self.browser_channels.pop(browser_id, None)
+
+        try:
+            await asyncio.wait_for(
+                pc.close(),
+                timeout=CLOSE_TIMEOUT_S,
+            )
+        except Exception:
+            pass
+
+        print(
+            f"[Laptop] Browser {browser_id[:8]} session closed."
+        )
 
     async def close(self) -> None:
-        """Close tracked WebSocket connections."""
-        await self._close_pi_webrtc()
+        """Close all WebRTC sessions."""
+        if self.pi_pc is not None:
+            await self._cleanup_pi(
+                self.pi_pc,
+                announce=False,
+            )
 
-        if self.pi_ws is not None:
-            try:
-                await self.pi_ws.close(
-                    code=1001,
-                    reason="server shutdown",
-                )
-            except Exception:
-                pass
-            self.pi_ws = None
-
-        for browser in list(self.browser_queues):
-            try:
-                await browser.close(
-                    code=1001,
-                    reason="server shutdown",
-                )
-            except Exception:
-                pass
-
-            await self.remove_browser(browser)
+        for browser_id, pc in list(
+            self.browser_pcs.items()
+        ):
+            await self._cleanup_browser(
+                browser_id,
+                pc,
+            )
 
 
 class DriverStationApp:
-    """Own the static HTTP server and WebSocket server."""
+    """Own the static HTTP server and WebRTC signaling relay."""
 
-    def __init__(self):
+    def __init__(self, loop: asyncio.AbstractEventLoop):
+        self.loop = loop
         self.relay = DriverStationServer()
+
         self.http_server = None
         self.http_thread = None
-        self.ws_server = None
 
     def start_http_server(self) -> None:
+        handler = partial(
+            StaticRequestHandler,
+            app=self,
+        )
+
         self.http_server = ThreadingHTTPServer(
             (HTTP_HOST, HTTP_PORT),
-            StaticRequestHandler,
+            handler,
         )
 
         self.http_thread = threading.Thread(
@@ -591,34 +816,12 @@ class DriverStationApp:
             f"[Laptop] HTTP server listening on "
             f"http://{HTTP_HOST}:{HTTP_PORT}"
         )
-
-    async def start_websocket_server(self) -> None:
-        self.ws_server = await serve(
-            self.relay.ws_handler,
-            WS_HOST,
-            WS_PORT,
-            ping_interval=PING_INTERVAL,
-            ping_timeout=PING_TIMEOUT,
-            open_timeout=OPEN_TIMEOUT,
-            close_timeout=CLOSE_TIMEOUT,
-            max_size=MAX_WS_MESSAGE_SIZE,
-            max_queue=16,
-            server_header="RAN Driver Station",
-        )
-
         print(
-            f"[Laptop] WebSocket server listening on "
-            f"ws://{WS_HOST}:{WS_PORT}{WS_PATH}"
+            f"[Laptop] Pi signaling endpoint: "
+            f"http://<laptop-ip>:{HTTP_PORT}{PI_OFFER_PATH}"
         )
 
     async def close(self) -> None:
-        if self.ws_server is not None:
-            self.ws_server.close()
-            await self.ws_server.wait_closed()
-            self.ws_server = None
-
-        await self.relay.close()
-
         if self.http_server is not None:
             self.http_server.shutdown()
             self.http_server.server_close()
@@ -628,12 +831,14 @@ class DriverStationApp:
             self.http_thread.join(timeout=2)
             self.http_thread = None
 
+        await self.relay.close()
+
 
 async def main() -> None:
-    app = DriverStationApp()
+    loop = asyncio.get_running_loop()
+    app = DriverStationApp(loop)
 
     app.start_http_server()
-    await app.start_websocket_server()
 
     try:
         await asyncio.Future()

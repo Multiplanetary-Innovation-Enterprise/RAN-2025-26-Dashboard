@@ -1,25 +1,31 @@
 /*  app.js — Driver Station Browser Logic
     Responsibilities:
-      1) Open a WebSocket to /ws (one pipe for all control + telemetry)
-      2) Send heartbeats and teleop commands at capped rates
-      3) Render incoming telemetry frames
-      4) Provide buttons for e-stop + queue commands
-    We keep names explicit and un-abstracted on purpose.
+      1) Open a WebRTC PeerConnection to the laptop relay.
+      2) Send teleop commands and heartbeats over DataChannels.
+      3) Render incoming telemetry frames.
+      4) Provide buttons for e-stop + queue commands.
+
+    HTTP is used only for WebRTC SDP signaling. There is no WebSocket transport.
 */
 import { flWheel } from "./wheel_cards/fl_telemetry.js";
 import { frWheel } from "./wheel_cards/fr_telemetry.js";
 import { rlWheel } from "./wheel_cards/rl_telemetry.js";
 import { rrWheel } from "./wheel_cards/rr_telemetry.js";
 
-let ws = null;
+let pc = null;
+let cmdChannel = null;
+let telemetryChannel = null;
+let controlChannel = null;
+let heartbeatChannel = null;
+
 let isConnected = false;
 let latestFaults = null;
 let lastCmdSentMs = 0;
 let lastHeartbeatId = 0;
 let reconnectTimer = null;
 let reconnectDelayMs = 1000;
-const WS_PORT = 8766;
-const WS_PATH = "/ws";
+
+const BROWSER_OFFER_PATH = "/api/webrtc/browser/offer";
 const MAX_RECONNECT_DELAY_MS = 5000;
 
 let dualTeleopCmd = {
@@ -30,9 +36,9 @@ let dualTeleopCmd = {
 };
 
 const CMD_PERIOD_MS = 50;           // 20 Hz cap
-const HEARTBEAT_PERIOD_MS = 200;
-const WHEEL_STATE_POLL_MS = 100;    // 10 Hz
-const FAULT_POLL_MS = 1000;         // 1 Hz
+const HEARTBEAT_PERIOD_MS = 200;    // 5 Hz
+const WHEEL_STATE_POLL_MS = 100;    // retained timing constant for UI compatibility
+const FAULT_POLL_MS = 1000;         // retained timing constant for UI compatibility
 let lastFaultPoll = 0;
 
 const FAULT_LIST = [
@@ -70,52 +76,117 @@ window.DS_setTeleop = function(
     c2_a, c2_b, c2_x, c2_y, c2_lb, c2_rb, c2_back, c2_start, c2_lclick, c2_rclick, c2_dup, c2_ddown, c2_dleft, c2_dright, c2_home, c2_share
   };
 
-  // Update UI for Controller 1
   const lxEl = $("#lx");
   const azEl = $("#az");
   if (lxEl) lxEl.textContent = Number(c1_lx || 0).toFixed(2);
   if (azEl) azEl.textContent = Number(c1_az || 0).toFixed(2);
 };
 
-// window.updateButtons = function(gp) {
-//   RX = Number(gp.axes[2]) || 0.0;
-//   RY = Number(gp.axes[3]) || 0.0;
-//   LT=gp.buttons[6].value || 0.0;
-//   RT=gp.buttons[7].value || 0.0;
-//   A=gp.buttons[0].value;
-//   B=gp.buttons[1].value;
-//   X=gp.buttons[2].value;
-//   Y=gp.buttons[3].value;
-//   LB=gp.buttons[4].value;
-//   RB=gp.buttons[5].value;
-//   BACK=gp.buttons[8].value;
-//   START=gp.buttons[9].value;
-//   LCLICK=gp.buttons[10].value;
-//   RCLICK=gp.buttons[11].value;
-//   DPAD_UP=gp.buttons[12].value;
-//   DPAD_DOWN=gp.buttons[13].value;
-//   DPAD_LEFT=gp.buttons[14].value;
-//   DPAD_RIGHT=gp.buttons[15].value;
-//   HOME=gp.buttons[16].value;
-// }
-
 const $ = sel => document.querySelector(sel);
 
-function setConnStatus(text) { $("#connStatus").textContent = text; }
-function setOwner(text) { $("#owner").textContent = text; }
-function wsUrl() {
-  const scheme = location.protocol === "https:" ? "wss" : "ws";
-  return `${scheme}://${location.hostname}:${WS_PORT}${WS_PATH}`;
+function setConnStatus(text) {
+  const el = $("#connStatus");
+  if (el) el.textContent = text;
+}
+
+function setOwner(text) {
+  const el = $("#owner");
+  if (el) el.textContent = text;
+}
+
+function waitForIceGatheringComplete(peer) {
+  if (peer.iceGatheringState === "complete") {
+    return Promise.resolve();
+  }
+
+  return new Promise(resolve => {
+    const timeout = setTimeout(() => {
+      resolve();
+    }, 5000);
+
+    peer.addEventListener("icegatheringstatechange", () => {
+      if (peer.iceGatheringState === "complete") {
+        clearTimeout(timeout);
+        resolve();
+      }
+    });
+  });
+}
+
+function closePeerConnection() {
+  isConnected = false;
+
+  const channels = [
+    cmdChannel,
+    telemetryChannel,
+    controlChannel,
+    heartbeatChannel,
+  ];
+
+  for (const channel of channels) {
+    try {
+      if (channel) channel.close();
+    } catch (_) {
+      // Already closed.
+    }
+  }
+
+  cmdChannel = null;
+  telemetryChannel = null;
+  controlChannel = null;
+  heartbeatChannel = null;
+
+  if (pc) {
+    try {
+      pc.close();
+    } catch (_) {
+      // Already closed.
+    }
+  }
+
+  pc = null;
+}
+
+function markConnectionState() {
+  const ready =
+    pc &&
+    pc.connectionState === "connected" &&
+    cmdChannel &&
+    cmdChannel.readyState === "open" &&
+    telemetryChannel &&
+    telemetryChannel.readyState === "open" &&
+    controlChannel &&
+    controlChannel.readyState === "open" &&
+    heartbeatChannel &&
+    heartbeatChannel.readyState === "open";
+
+  if (ready) {
+    if (!isConnected) {
+      isConnected = true;
+      reconnectDelayMs = 1000;
+      setConnStatus("connected");
+
+      sendJson({
+        t: "set",
+        telemetry_hz: 10,
+      });
+    }
+  } else if (isConnected) {
+    isConnected = false;
+    setConnStatus("transport degraded");
+  }
 }
 
 function scheduleReconnect() {
   if (reconnectTimer || isConnected) return;
 
-  setConnStatus(`reconnecting in ${(reconnectDelayMs / 1000).toFixed(1)}s`);
+  setConnStatus(
+    `reconnecting in ${(reconnectDelayMs / 1000).toFixed(1)}s`
+  );
 
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    connectWebSocket();
+    connectWebRTC();
   }, reconnectDelayMs);
 
   reconnectDelayMs = Math.min(
@@ -124,8 +195,38 @@ function scheduleReconnect() {
   );
 }
 
-function connectWebSocket() {
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+function attachChannel(channel, name, onmessage = null) {
+  channel.binaryType = "arraybuffer";
+
+  channel.onopen = () => {
+    console.log(`[WebRTC] '${name}' DataChannel open`);
+    markConnectionState();
+  };
+
+  channel.onclose = () => {
+    console.log(`[WebRTC] '${name}' DataChannel closed`);
+    isConnected = false;
+    setConnStatus("transport disconnected");
+  };
+
+  channel.onerror = event => {
+    console.error(`[WebRTC] '${name}' DataChannel error:`, event);
+    isConnected = false;
+  };
+
+  if (onmessage) {
+    channel.onmessage = onmessage;
+  }
+}
+
+async function connectWebRTC() {
+  if (
+    pc &&
+    (
+      pc.connectionState === "connecting" ||
+      pc.connectionState === "connected"
+    )
+  ) {
     return;
   }
 
@@ -134,100 +235,264 @@ function connectWebSocket() {
     reconnectTimer = null;
   }
 
-  const socket = new WebSocket(wsUrl());
-  ws = socket;
+  closePeerConnection();
+
   setConnStatus("connecting");
 
-  socket.onopen = () => {
-    // Ignore events from an obsolete socket.
-    if (ws !== socket) return;
+  const peer = new RTCPeerConnection();
+  pc = peer;
 
-    isConnected = true;
-    reconnectDelayMs = 1000;
-    setConnStatus("connected");
+  peer.onconnectionstatechange = () => {
+    const state = peer.connectionState;
+    console.log(`[WebRTC] peer connection state: ${state}`);
 
-    // Re-apply the browser's preferred telemetry rate after every
-    // successful connection to the relay.
-    sendJson({ t: "set", telemetry_hz: 10 });
-  };
+    if (state === "connected") {
+      markConnectionState();
+      return;
+    }
 
-  socket.onclose = (event) => {
-    if (ws !== socket) return;
+    if (state === "failed" || state === "closed") {
+      if (pc === peer) {
+        closePeerConnection();
+        setConnStatus("disconnected");
+        scheduleReconnect();
+      }
+      return;
+    }
 
-    ws = null;
-    isConnected = false;
-
-    setConnStatus(
-      `disconnected (${event.code})`
-    );
-
-    scheduleReconnect();
-  };
-
-  socket.onerror = () => {
-    // onclose will perform the actual reconnect scheduling.
-    setConnStatus("connection error");
-  };
-
-  socket.onmessage = (evt) => {
-    try {
-      const m = JSON.parse(evt.data);
-      handleServerMessage(m);
-    } catch (err) {
-      console.error("Invalid WebSocket message:", err);
+    if (state === "disconnected") {
+      isConnected = false;
+      setConnStatus("transport disconnected");
     }
   };
+
+  peer.oniceconnectionstatechange = () => {
+    console.log(
+      `[WebRTC] ICE connection state: ${peer.iceConnectionState}`
+    );
+  };
+
+  cmdChannel = peer.createDataChannel("cmd", {
+    ordered: false,
+    maxRetransmits: 0,
+  });
+
+  telemetryChannel = peer.createDataChannel("telemetry", {
+    ordered: false,
+    maxRetransmits: 0,
+  });
+
+  controlChannel = peer.createDataChannel("control", {
+    ordered: true,
+  });
+
+  heartbeatChannel = peer.createDataChannel("heartbeat", {
+    ordered: false,
+    maxRetransmits: 0,
+  });
+
+  attachChannel(cmdChannel, "cmd");
+  attachChannel(
+    telemetryChannel,
+    "telemetry",
+    evt => {
+      try {
+        const raw =
+          typeof evt.data === "string"
+            ? evt.data
+            : new TextDecoder().decode(evt.data);
+
+        handleServerMessage(JSON.parse(raw));
+      } catch (err) {
+        console.error(
+          "Invalid telemetry DataChannel message:",
+          err
+        );
+      }
+    }
+  );
+
+  attachChannel(
+    controlChannel,
+    "control",
+    evt => {
+      try {
+        const raw =
+          typeof evt.data === "string"
+            ? evt.data
+            : new TextDecoder().decode(evt.data);
+
+        handleServerMessage(JSON.parse(raw));
+      } catch (err) {
+        console.error(
+          "Invalid control DataChannel message:",
+          err
+        );
+      }
+    }
+  );
+
+  attachChannel(
+    heartbeatChannel,
+    "heartbeat",
+    evt => {
+      try {
+        const raw =
+          typeof evt.data === "string"
+            ? evt.data
+            : new TextDecoder().decode(evt.data);
+
+        handleServerMessage(JSON.parse(raw));
+      } catch (err) {
+        console.error(
+          "Invalid heartbeat DataChannel message:",
+          err
+        );
+      }
+    }
+  );
+
+  try {
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+
+    await waitForIceGatheringComplete(peer);
+
+    const response = await fetch(
+      BROWSER_OFFER_PATH,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        cache: "no-store",
+        body: JSON.stringify({
+          sdp: peer.localDescription.sdp,
+          sdp_type: peer.localDescription.type,
+          client: "browser",
+          protocol: "0.3",
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        `signaling HTTP ${response.status}`
+      );
+    }
+
+    const answer = await response.json();
+
+    if (!answer.ok) {
+      throw new Error(
+        answer.error || "signaling request failed"
+      );
+    }
+
+    await peer.setRemoteDescription({
+      type: answer.sdp_type,
+      sdp: answer.sdp,
+    });
+
+    console.log("[WebRTC] signaling complete.");
+  } catch (err) {
+    console.error(
+      "[WebRTC] connection setup failed:",
+      err
+    );
+
+    if (pc === peer) {
+      closePeerConnection();
+    }
+
+    setConnStatus("connection failed");
+    scheduleReconnect();
+  }
+}
+
+function sendChannel(channel, obj) {
+  if (!channel || channel.readyState !== "open") {
+    return false;
+  }
+
+  try {
+    channel.send(
+      JSON.stringify(obj)
+    );
+    return true;
+  } catch (err) {
+    console.error(
+      "[WebRTC] DataChannel send failed:",
+      err
+    );
+    return false;
+  }
 }
 
 function sendJson(obj) {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(obj));
+  let channel = controlChannel;
+
+  if (obj.t === "cmd") {
+    channel = cmdChannel;
+  } else if (obj.t === "hb" || obj.t === "hb.ack") {
+    channel = heartbeatChannel;
   }
+
+  const sent = sendChannel(
+    channel,
+    obj
+  );
+
+  if (!sent) {
+    return false;
+  }
+
+  return true;
 }
 
 function heartbeatLoop() {
-  if (isConnected) {
+  if (
+    heartbeatChannel &&
+    heartbeatChannel.readyState === "open"
+  ) {
     lastHeartbeatId += 1;
 
-    sendJson({
-      t: "hb",
-      id: lastHeartbeatId,
-      ts_ms: Date.now(),
-    });
+    sendChannel(
+      heartbeatChannel,
+      {
+        t: "hb",
+        id: lastHeartbeatId,
+        ts_ms: Date.now(),
+      }
+    );
   }
 
-  setTimeout(heartbeatLoop, HEARTBEAT_PERIOD_MS);
-}
-
-function telemetryPollLoop() {
-  const now = performance.now();
-
-  if (isConnected) {
-    // wheel telemetry (10 Hz)
-    sendJson({ t: "svc", name: "wheel_state.poll" });
-
-    // fault telemetry (1 Hz)
-    if (now - lastFaultPoll >= FAULT_POLL_MS) {
-      sendJson({ t: "svc", name: "faults.poll" });
-      lastFaultPoll = now;
-    }
-  }
-
-  setTimeout(telemetryPollLoop, WHEEL_STATE_POLL_MS);
+  setTimeout(
+    heartbeatLoop,
+    HEARTBEAT_PERIOD_MS
+  );
 }
 
 function cmdLoop() {
   const now = performance.now();
-  if (isConnected && now - lastCmdSentMs >= CMD_PERIOD_MS) {
-    // Send the complete payload, adding the "t" identifier for the Python router
-    const payload = { 
-      t: "cmd", 
-      ...dualTeleopCmd 
+
+  if (
+    isConnected &&
+    now - lastCmdSentMs >= CMD_PERIOD_MS
+  ) {
+    const payload = {
+      t: "cmd",
+      ...dualTeleopCmd,
     };
 
-    sendJson(payload);
+    sendChannel(
+      cmdChannel,
+      payload
+    );
+
     lastCmdSentMs = now;
   }
+
   requestAnimationFrame(cmdLoop);
 }
 
@@ -441,7 +706,7 @@ function bindKeyboardTeleop() {
 // Bind button click handlers
 // E-stop, connect, enqueue, cancel buttons
 function bindButtons() {
-  $("#btnConnect").onclick = () => connectWebSocket();
+  $("#btnConnect").onclick = () => connectWebRTC();
   $("#btnEstop").onclick   = () => sendJson({ t:"estop", value:true });
   $("#btnEnqueue").onclick = () => {
     const distance = parseFloat($("#inDistance").value);
@@ -459,10 +724,8 @@ function main() {
   bindButtons();
 
   // These loops run exactly once for the lifetime of the page.
-  // They simply stop transmitting while the WebSocket is disconnected,
-  // which prevents duplicate timers after reconnects.
+  // They simply stop transmitting while the WebRTC transport is unavailable.
   heartbeatLoop();
-  telemetryPollLoop();
   cmdLoop();
 }
 main();

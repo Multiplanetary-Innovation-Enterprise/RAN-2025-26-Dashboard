@@ -1,116 +1,137 @@
-wire_protocol.txt — Driver Station ⇄ Server ⇄ Pi Client (v0.2)
+wire_protocol.txt — Driver Station ⇄ Laptop Relay ⇄ Pi Client (v0.3)
 
 Goal
-  Simple JSON protocol over a single WebSocket.
-  Supports:
-    - low-latency teleop commands (<= 20 Hz)
-    - configurable telemetry stream (default 10 Hz)
-    - e-stop
-    - action queue (drive goals)
-    - alerts
-    - ownership/mux (teleop vs auton)
+  JSON application protocol transported over WebRTC DataChannels.
 
- Transport
-  WebSocket endpoint: /ws on the driver-station WebSocket port (8766)
-  Message encoding: UTF-8 JSON objects, one per WS frame.
-  Recommended JSON serialization on sender:
-    separators=(",",":")  
+  The migration removes WebSocket/TCP as the rover application transport.
+  The HTTP server is used only for WebRTC SDP signaling.
+
+  WebRTC DataChannels use:
+    SCTP over DTLS over UDP
+
+  DataChannels:
+    cmd        - unordered / unreliable
+    telemetry  - unordered / unreliable
+    control    - ordered / reliable
+    heartbeat  - unordered / unreliable
+
+Supports:
+  - low-latency teleop commands (<= 20 Hz)
+  - configurable telemetry stream (default 10 Hz)
+  - e-stop
+  - action queue (drive goals)
+  - alerts
+  - ownership/mux (teleop vs auton)
+  - connection heartbeat / RTT
+
+Transport / signaling
+  HTTP signaling endpoint on laptop port 8765:
+
+    Pi:
+      POST /api/webrtc/pi/offer
+
+    Browser:
+      POST /api/webrtc/browser/offer
+
+  Request body contains:
+    { "sdp": "...", "sdp_type": "offer" }
+
+  Response contains:
+    { "ok": true, "sdp": "...", "sdp_type": "answer" }
+
+  Once the PeerConnection is established, application messages MUST use the
+  appropriate DataChannel. There is no WebSocket fallback.
 
 Timing / Identity
-  ts_ms  : sender timestamp in milliseconds (use monotonic ms if available)
-  seq    : per-direction increasing sequence number (optional but strongly recommended)
-  id     : request/transaction identifier used for matching responses (hb, queue actions)
+  ts_ms  : sender wall-clock timestamp in milliseconds
+  seq    : per-direction increasing sequence number where useful
+  id     : request/transaction identifier used for matching responses
 
 Units
-  cmd.lx : linear-x, meters/second (m/s)
-  cmd.az : angular-z, radians/second (rad/s)
-  imu.rpy: roll/pitch/yaw, radians (rad)
-  enc.*  : wheel speeds, revolutions/second (rps)
-  bat.v  : volts (V)
-  bat.i  : amps (A)
-  net.*  : kbps, milliseconds
+  cmd.c*_lx : linear-x command, meters/second
+  cmd.c*_az : angular-z command, radians/second
+  imu.rpy   : roll/pitch/yaw, radians
+  enc.*     : wheel speeds, revolutions/second
+  bat.v     : volts
+  bat.i     : amps
+  net.*     : kbps, milliseconds
 
 Behavior rules
-  - cmd messages should be rate-limited to <= 20 Hz by the client.
-  - telemetry frames are pushed by the server at telemetry_hz (default 10 Hz).
+  - cmd messages SHOULD be sent at <= 20 Hz.
+  - cmd uses unordered/unreliable delivery. New commands supersede old commands.
+  - telemetry uses unordered/unreliable delivery. Stale telemetry may be dropped.
+  - control is ordered/reliable for state-changing commands.
+  - heartbeat uses its own unordered/unreliable channel so heartbeat traffic
+    cannot block e-stop or other control traffic.
   - mux determines who is allowed to command motion.
-  - server MAY ignore cmd messages when mux != "teleop".
-  - estop is a latch: once asserted, motion should remain stopped until cleared.
+  - Pi command watchdog MUST stop teleop motion when valid cmd traffic is lost.
+  - estop is a latch: once asserted, motion remains stopped until cleared.
 
 # -----------------------------------------------------------------------------
-# Client → Server Messages
+# Browser/Laptop -> Pi
 # -----------------------------------------------------------------------------
 
-1) Heartbeat (client sends ~5 Hz, i.e., every ~200 ms)
-  Purpose: detect dead connections + measure RTT (via hb.ack)
+1) Heartbeat
+  Channel: heartbeat
+  Purpose: detect stale transport and measure RTT
 { "t":"hb", "id":421, "ts_ms":12345678 }
 
-2) Teleop command (<= 20 Hz)
-  lx: forward/backward speed command in m/s
-  az: turn rate command in rad/s
-  seq: monotonically increasing integer for debugging and stale-cmd detection
-{ "t":"cmd", "seq":812, "ts_ms":12345680, "lx":0.25, "az":-0.30 }
+2) Teleop command
+  Channel: cmd
+  Purpose: current joystick command; old commands may be discarded
+{ "t":"cmd", "seq":812, "ts_ms":12345680, "c1_lx":0.25, "c1_az":-0.30 }
 
-3) Emergency stop (latched)
-  value=true  : latch e-stop ON (stop motion)
-  value=false : clear e-stop (allow motion if mux permits)
+3) Emergency stop
+  Channel: control
+  value=true  : latch e-stop ON
+  value=false : clear e-stop
 { "t":"estop", "ts_ms":12345681, "value":true }
 
 4) Set / reconfigure telemetry stream
-  telemetry_hz: server push rate for tlm frames
-  tlm_fields  : optional allow-list of sub-objects to include in tlm payload
-  (useful for bandwidth control and future extensibility)
-{ "t":"set", "telemetry_hz":10, "tlm_fields":["imu","enc","bat","net","mux","queue"] }
+  Channel: control
+{ "t":"set", "telemetry_hz":10,
+  "tlm_fields":["imu","enc","bat","net","mux","queue"] }
 
-5) Mux / ownership request (teleop vs auton)
- mode: requested mode. Server decides final mux and broadcasts mux.state.
+5) Mux / ownership request
+  Channel: control
 { "t":"mux.request", "ts_ms":12345690, "mode":"teleop" }
 
-6) Queue a drive action (goal)
-  id: caller-provided identifier for matching queue.result / queue.state
-  distance_m: meters to drive
-  heading_deg: heading to maintain (degrees)
-  max_speed_mps: speed limit (m/s)
-{ "t":"queue.drive", "id":"drive-17", "distance_m":1.0, "heading_deg":0, "max_speed_mps":0.4 }
+6) Queue a drive action
+  Channel: control
+{ "t":"queue.drive", "id":"drive-17",
+  "distance_m":1.0, "heading_deg":0,
+  "max_speed_mps":0.4 }
 
-7) Cancel current queue action (and/or clear pending)
+7) Cancel current queue action
+  Channel: control
 { "t":"queue.cancel", "ts_ms":12345700 }
 
 # -----------------------------------------------------------------------------
-# Server → Client Messages
+# Pi -> Laptop/Browser
 # -----------------------------------------------------------------------------
 
 1) Hello / handshake
-  ver: protocol version
-  caps: server capabilities (informational)
-  defaults: key default rates/limits so clients can adapt automatically
+  Channel: control
 {
-  "t":"hello",
-  "ver":"0.2",
-  "server":"driver-station",
-  "caps":["teleop","queue","estop"],
-  "defaults":{"telemetry_hz":10,"cmd_hz_max":20}
+  "t":"hello.ack",
+  "ver":"0.3",
+  "client":"pi",
+  "caps":["telemetry","teleop","queue","estop","webrtc_datachannels"]
 }
 
-2) Heartbeat acknowledgement (for RTT calculation)
-  Client measures RTT = now_ms - hb.ts_ms (or uses echoed timestamps)
+2) Heartbeat acknowledgement
+  Channel: heartbeat
 { "t":"hb.ack", "id":421, "ts_ms":12345705 }
 
 3) Mux state broadcast
-  mode: current mode authoritative on the server/pi side
-  owner: optional human-readable owner label (client id, "pi", etc.)
-{ "t":"mux.state", "ts_ms":12345706, "mode":"teleop", "owner":"web" }
+  Channel: control
+{ "t":"mux.state", "ts_ms":12345706,
+  "mode":"teleop", "owner":"pi" }
 
-4) Telemetry frame (pushed at telemetry_hz, default 10 Hz)
-  mux: who owns motion ("teleop" or "auton")
-  imu: rpy in radians
-  enc: wheel speeds and raw encoder ticks
-  bat: battery info
-  net: network stats including rtt_ms if computed from hb/hb.ack
-  cmd_echo: last accepted command (useful to see what the robot/server is actually using)
-#    NOTE:
-#      Telemetry values SHOULD come from the rover/pi (authoritative).
-#      During development, stubs may fill placeholders, but keep schema stable.
+4) Telemetry frame
+  Channel: telemetry
+  Pushed at telemetry_hz, default 10 Hz.
+
 {
   "t":"tlm",
   "seq":9321,
@@ -119,16 +140,26 @@ Behavior rules
   "mux":"teleop",
 
   "imu":{"rpy":[0.02,0.01,1.57]},
-  "enc":{"l_rps":1.22,"r_rps":1.19,"ticks":[12345,12312],"hz":100},
-  "bat":{"v":11.9,"i":1.2,"temp":32.1},
-  "net":{"ctl_kbps":8,"tlm_kbps":22,"vid_kbps":900,"rtt_ms":25},
+  "enc":{"l_rps":1.22,"r_rps":1.19},
+  "bat":{"v":11.9,"i":1.2},
 
-  "cmd_echo":{"lx":0.25,"az":-0.30}
+  "net":{
+    "ctl_kbps":8,
+    "tlm_kbps":22,
+    "vid_kbps":900,
+    "rtt_ms":25
+  },
+
+  "cmd_echo":{
+    "c1_lx":0.25,
+    "c1_az":-0.30,
+    "c2_lx":0.0,
+    "c2_az":0.0
+  }
 }
 
-5) Queue state update (event-driven and/or periodically included in tlm)
-  active: currently running action with progress [0..1] and remaining distance
-  pending: list of queued action IDs
+5) Queue state
+  Channel: control
 {
   "t":"queue.state",
   "ts_ms":12345720,
@@ -136,28 +167,38 @@ Behavior rules
   "pending":[{"id":"drive-18"},{"id":"drive-19"}]
 }
 
-6) Queue result (completion/failure)
-  id: matches the command ID provided by the client
-  success: true/false
-  reason: human-readable reason (for UI logs)
-{ "t":"queue.result", "ts_ms":12345740, "id":"drive-17", "success":true, "reason":"Done" }
+6) Queue result
+  Channel: control
+{
+  "t":"queue.result",
+  "ts_ms":12345740,
+  "id":"drive-17",
+  "success":true,
+  "reason":"Done"
+}
 
-7) Alerts / warnings / errors (event-driven)
-  level: "info" | "warn" | "error"
-  msg: human-readable message
-{ "t":"alert", "level":"warn", "msg":"IMU timeout 200 ms" }
+7) Alerts / warnings / errors
+  Channel: control
+{
+  "t":"alert",
+  "level":"warn",
+  "msg":"IMU timeout 200 ms"
+}
 
 # -----------------------------------------------------------------------------
-# Suggested defaults (non-binding)
+# Suggested defaults
 # -----------------------------------------------------------------------------
-# - Client heartbeat: 5 Hz (every 200 ms)
-# - cmd rate limit: 20 Hz
-# - telemetry default: 10 Hz
-# - Telemetry fields default: imu, enc, bat, net, mux (queue optional)
+
+  heartbeat_hz        = 5
+  command_hz_max      = 20
+  telemetry_hz       = 10
+  command_watchdog_ms = 250
 
 # -----------------------------------------------------------------------------
 # Extensibility guidance
 # -----------------------------------------------------------------------------
-# - Add new message types by prefixing with a namespace: "nav.*", "slam.*", "arm.*"
-# - Keep old keys stable; add new keys rather than renaming.
-# - If adding a compact/high-rate telemetry variant, use a new type "tlm2".
+
+  - Add new message types with a namespace: nav.*, slam.*, arm.*
+  - Keep existing keys stable.
+  - Add new keys instead of renaming existing ones.
+  - For compact/high-rate telemetry, add a new type such as tlm2.
