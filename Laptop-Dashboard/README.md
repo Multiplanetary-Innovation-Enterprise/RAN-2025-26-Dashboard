@@ -98,19 +98,35 @@ The browser uses the same laptop origin for:
 /api/webrtc/browser/offer
 ```
 
+## Video
+
+The video panel pulls two H.264 streams straight from MediaMTX on the Pi over
+WHEP (`http://<pi-ip>:8889/rover_video_{1,2}/whep`). Set the Pi address in
+`web/components/video-panel.js`.
+
+## E-stop
+
+E-STOP (button or Space bar) sends `{"t":"estop","value":true}` on the control
+channel. The Pi's `DriveService` latches it and publishes zeroed `/joy1` and
+`/joy2` until cleared with the Clear button. The latch state is shown from
+telemetry (`tlm.estop`). It only gates driver-station joystick input; it does
+not stop autonomy.
+
 ## Project Structure
 
 ```text
-Laptop Dashboard/
+Laptop-Dashboard/
 ├─ server/
-│  └─ app.py
+│  └─ app.py                  # HTTP static server + WebRTC signaling/relay
 ├─ web/
 │  ├─ index.html
-│  ├─ main.js
-│  ├─ app.js
-│  ├─ gamepad.js
-│  └─ components/
+│  ├─ main.js                 # imports components, then app.js / gamepad.js
+│  ├─ app.js                  # WebRTC transport, telemetry rendering, e-stop
+│  ├─ gamepad.js              # Xbox controllers -> cmd message
+│  ├─ style.css
+│  └─ components/             # web components (+ vendored chart.js)
 ├─ requirements.txt
-├─ start_dashboard.py
-└─ wire_protocol.txt
+├─ start_dashboard.py         # creates .venv, installs deps, starts server
+├─ run_dashboard.ps1          # Windows wrapper for start_dashboard.py
+└─ wire_protocol.txt          # message reference
 ```

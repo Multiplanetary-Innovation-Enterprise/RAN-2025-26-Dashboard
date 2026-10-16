@@ -78,8 +78,15 @@ Behavior rules
 
 2) Teleop command
   Channel: cmd
-  Purpose: current joystick command; old commands may be discarded
-{ "t":"cmd", "seq":812, "ts_ms":12345680, "c1_lx":0.25, "c1_az":-0.30 }
+  Purpose: raw controller state; old commands may be discarded.
+  The Pi republishes it as sensor_msgs/Joy on /joy1 (c1_*) and /joy2 (c2_*).
+  Every key is sent for both controllers (zeros when not connected):
+    axes    c*_lx (left stick Y, up=+), c*_az (left stick X), c*_rx, c*_ry,
+            c*_rt, c*_lt (triggers, 0..1)
+    buttons c*_a, c*_b, c*_x, c*_y, c*_lb, c*_rb, c*_back, c*_start,
+            c*_lclick, c*_rclick, c*_dup, c*_ddown, c*_dleft, c*_dright,
+            c*_home, c*_share (0 or 1)
+{ "t":"cmd", "c1_lx":0.25, "c1_az":-0.30, "c1_rt":0.8, "c1_a":0, ..., "c2_share":0 }
 
 3) Emergency stop
   Channel: control
@@ -138,6 +145,7 @@ Behavior rules
   "ts_ms":12345710,
 
   "mux":"teleop",
+  "estop":false,
 
   "imu":{"rpy":[0.02,0.01,1.57]},
   "enc":{"l_rps":1.22,"r_rps":1.19},
@@ -155,7 +163,29 @@ Behavior rules
     "c1_az":-0.30,
     "c2_lx":0.0,
     "c2_az":0.0
-  }
+  },
+
+  "queue":{"active":null,"pending":[]},
+
+  "faults":{                         // kraken_drive, per wheel fl/fr/rl/rr
+    "fl":{"connected":true,"enabled":true,"fault":false,
+          "bits":{"brownout":false,"sticky_brownout":false,...}},
+    ...
+  },
+
+  "wheel_state":{
+    "wheel_state":{                  // per wheel fl/fr/rl/rr
+      "fl":{"measured_rps":0.31,"commanded_rps":0.32,"current":3.1,
+            "torque_current":1.2,"temp":31.0,"proc_temp":40.0,
+            "steer":0.21,            // rad, CCW+; uros feedback or command
+            "cmd_steer":0.22},       // rad, from rover_kinematics
+      ...
+    },
+    "steer_source":"feedback",       // "feedback" | "command" | "none"
+    "age_sec":0.02
+  },
+
+  "drive_mode":{"drive_mode":"ackermann","drive_mode_age":3.4}
 }
 
 5) Queue state

@@ -53,27 +53,14 @@ CLOSE_TIMEOUT_S = 5.0
 
 PROTOCOL_VERSION = "0.3"
 
-CONTROL_TYPES = {
-    "hello",
-    "hello.ack",
-    "estop",
-    "set",
-    "mux.request",
-    "mux.state",
-    "queue.drive",
-    "queue.cancel",
-    "queue.state",
-    "queue.result",
-    "alert",
-}
+CHANNEL_LABELS = {"cmd", "telemetry", "control", "heartbeat"}
 
-TELEMETRY_TYPES = {"tlm"}
-
-HEARTBEAT_TYPES = {"hb", "hb.ack"}
+# Browser messages that need a Pi; warn the operator if none is connected.
+PI_BOUND_TYPES = {"cmd", "estop", "queue.drive", "queue.cancel", "mux.request", "set"}
 
 
-def _json_bytes(obj: dict) -> bytes:
-    return json.dumps(obj, separators=(",", ":")).encode("utf-8")
+def _dumps(obj: dict) -> str:
+    return json.dumps(obj, separators=(",", ":"))
 
 
 def _decode_json(data) -> dict | None:
@@ -105,19 +92,15 @@ class StaticRequestHandler(SimpleHTTPRequestHandler):
         # Keep the console focused on rover/network diagnostics.
         pass
 
-    def do_GET(self):
-        # Static JS must not be cached while the dashboard is under active
-        # development/migration; otherwise an old app.js can survive a server
-        # restart and make the UI appear stuck in the previous state.
-        super().do_GET()
-
     def end_headers(self):
+        # Never cache: an old app.js surviving a server restart looks like a
+        # stuck UI.
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")
         super().end_headers()
 
     def _send_json(self, status: int, payload: dict) -> None:
-        body = _json_bytes(payload)
+        body = _dumps(payload).encode("utf-8")
 
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -285,12 +268,7 @@ class DriverStationServer:
         def _on_datachannel(channel):
             label = channel.label
 
-            if label not in {
-                "cmd",
-                "telemetry",
-                "control",
-                "heartbeat",
-            }:
+            if label not in CHANNEL_LABELS:
                 print(
                     f"[Laptop] Ignoring unknown Pi DataChannel: {label}"
                 )
@@ -369,12 +347,7 @@ class DriverStationServer:
         def _on_datachannel(channel):
             label = channel.label
 
-            if label not in {
-                "cmd",
-                "telemetry",
-                "control",
-                "heartbeat",
-            }:
+            if label not in CHANNEL_LABELS:
                 print(
                     f"[Laptop] Ignoring unknown browser DataChannel: {label}"
                 )
@@ -390,21 +363,6 @@ class DriverStationServer:
                 )
 
                 if label == "control":
-                    self._send_channel(
-                        channel,
-                        {
-                            "t": "hello",
-                            "ver": PROTOCOL_VERSION,
-                            "server": "laptop",
-                            "caps": [
-                                "teleop",
-                                "queue",
-                                "estop",
-                                "video_h264",
-                            ],
-                        },
-                    )
-
                     if (
                         self.pi_pc is not None
                         and self.pi_pc.connectionState == "connected"
@@ -499,12 +457,7 @@ class DriverStationServer:
             return False
 
         try:
-            channel.send(
-                json.dumps(
-                    obj,
-                    separators=(",", ":"),
-                )
-            )
+            channel.send(_dumps(obj))
             return True
         except Exception as e:
             print(
@@ -572,27 +525,6 @@ class DriverStationServer:
                     "msg": "Pi connected",
                 },
                 "control",
-            )
-            return
-
-        if msg_type == "hello":
-            self._send_browser_direct(
-                browser_id,
-                {
-                    "t": "hello.ack",
-                    "ver": PROTOCOL_VERSION,
-                    "server": "laptop",
-                    "caps": [
-                        "teleop",
-                        "queue",
-                        "estop",
-                        "webrtc_datachannels",
-                    ],
-                },
-                "control",
-            )
-            print(
-                f"[Laptop] Browser {browser_id[:8]} application handshake received."
             )
             return
 
@@ -671,14 +603,7 @@ class DriverStationServer:
             return
 
         if self.pi_pc is None:
-            if msg_type in {
-                "cmd",
-                "estop",
-                "queue.drive",
-                "queue.cancel",
-                "mux.request",
-                "set",
-            }:
+            if msg_type in PI_BOUND_TYPES:
                 self._send_browser_alert(
                     browser_id,
                     "warn",

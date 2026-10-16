@@ -5,7 +5,6 @@ class BandwidthPanel extends HTMLElement {
     this._rendered = true;
 
     this.classList.add('card');
-    this.id = this.id || 'bandwidthSecton';
 
     this.innerHTML = `
         <h3>Bandwidth Utilization (Mbps)</h3>
@@ -74,7 +73,6 @@ class BandwidthPanel extends HTMLElement {
           y: {
             min: 0,
             max: 4,
-            suggestedmax: 4,
             title: {
               display: true,
               text: "Mb/s"
@@ -113,7 +111,7 @@ class BandwidthPanel extends HTMLElement {
     this.chart.data.datasets[0].data.push(inst);
     this.chart.data.datasets[1].data.push(avg);
 
-    // Keep ~60 seconds of history
+    // Keep the last 60 samples (~6 s at the default 10 Hz telemetry rate)
     if (this.chart.data.labels.length > 60) {
      this.chart.data.labels.shift();
      this.chart.data.datasets[0].data.shift();

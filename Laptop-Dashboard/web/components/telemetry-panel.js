@@ -5,7 +5,6 @@ class TelemetryPanel extends HTMLElement {
     this._rendered = true;
 
     this.classList.add('card');
-    this.id = this.id || 'telemetrySection';
 
     this.innerHTML = `
       <h3>Telemetry</h3>

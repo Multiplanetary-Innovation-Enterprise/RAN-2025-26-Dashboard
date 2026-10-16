@@ -5,7 +5,6 @@ class QueuePanel extends HTMLElement {
     this._rendered = true;
 
     this.classList.add('card');
-    this.id = this.id || 'queueSection';
 
     this.innerHTML = `
       <h3>Command Queue</h3>
@@ -25,6 +24,7 @@ class QueuePanel extends HTMLElement {
         <button id="btnCancel">Cancel Active</button>
       </div>
       <div id="queueState">idle</div>
+      <div id="queueResult" class="note"></div>
     `;
   }
 }

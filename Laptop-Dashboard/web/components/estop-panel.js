@@ -4,19 +4,22 @@ class EStopPanel extends HTMLElement {
     if (this._rendered) return;
     this._rendered = true;
 
-    this.classList.add('card');
-    this.id = this.id || 'estopSection';
+    this.classList.add("card");
 
     this.innerHTML = `
       <h3>E-STOP</h3>
-      <button id="btnEstop" class="danger">E-STOP</button>
-      <div>Owner: <strong id="owner">?</strong></div>
-      <div>lx: <span id="lx">0.00</span> m/s | az: <span id="az">0.00</span> rad/s</div>
+      <div class="row">
+        <button id="btnEstop" class="danger">E-STOP</button>
+        <button id="btnEstopClear">Clear</button>
+      </div>
+      <div>State: <strong id="estopState" class="estop-unknown">unknown</strong></div>
+      <div>Motion owner: <strong id="owner">?</strong></div>
       <p class="note">
-        Keyboard: W/S = forward/back, A/D = left/right. Rate limited to 20 Hz.
+        Space bar also triggers E-STOP. While latched, the Pi publishes zeroed
+        joystick commands; it does not stop autonomy.
       </p>
     `;
   }
 }
 
-customElements.define('estop-panel', EStopPanel);
+customElements.define("estop-panel", EStopPanel);

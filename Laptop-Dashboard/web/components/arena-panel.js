@@ -1,11 +1,10 @@
 // components/arena-panel.js
-class TelemetryPanel extends HTMLElement {
+class ArenaPanel extends HTMLElement {
   connectedCallback() {
     if (this._rendered) return;
     this._rendered = true;
 
     this.classList.add('card');
-    this.id = this.id || 'arenaSection';
 
     this.innerHTML = `
       <h3>Arena</h3>
@@ -18,4 +17,4 @@ class TelemetryPanel extends HTMLElement {
   }
 }
 
-customElements.define('arena-panel', TelemetryPanel);
+customElements.define('arena-panel', ArenaPanel);

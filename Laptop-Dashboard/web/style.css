@@ -1,4 +1,3 @@
-body { font-family: system-ui, sans-serif; margin: 0; background: #0b0d12; color: #e7e9ee; }
 .bar { display:flex; gap:1rem; align-items:center; padding:0.75rem 1rem; background:#141826; border-bottom:1px solid #242a3b; }
 button { padding:0.5rem 0.9rem; border-radius:8px; border:1px solid #39415a; background:#1b2133; color:#e7e9ee; cursor:pointer; }
 button.danger { background:#4a1620; border-color:#7a2333; }
@@ -16,12 +15,16 @@ body {
   color: #f5f7ff;
 }
 
-.dashboard {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
-  padding: 1.5rem;
-}
+/* Connection bar alerts (non-blocking replacement for window.alert) */
+#alertMsg { margin-left: auto; font-size: 0.9rem; }
+.alert-info { color: #46d3ff; }
+.alert-warn { color: #fbbf24; }
+.alert-error { color: #ff5252; font-weight: bold; }
+
+/* E-stop state */
+.estop-latched { color: #ff5252; }
+.estop-clear { color: #4caf50; }
+.estop-unknown { color: #777; }
 
 .panel {
   background: #0c1020;
@@ -155,15 +158,10 @@ body {
 
 /* Rover visualization */
 
-#rover-visual {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-}
-
 .rover-body {
   width: 160px;
   height: 240px;
+  margin: 0 auto 0.75rem;
   border-radius: 16px;
   background: #151b33;
   border: 2px solid #273056;
@@ -171,67 +169,46 @@ body {
   box-shadow: inset 0 0 14px rgba(0, 0, 0, 0.6);
 }
 
-/* Wheels: simple rectangles positioned at corners */
+.wheel-slot {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.wheel-slot.fl { top: 10px; left: 8px; }
+.wheel-slot.fr { top: 10px; right: 8px; flex-direction: row-reverse; }
+.wheel-slot.rl { bottom: 10px; left: 8px; }
+.wheel-slot.rr { bottom: 10px; right: 8px; flex-direction: row-reverse; }
+
+/* --speed (0..1) is set from measured wheel RPS */
 .wheel {
+  --speed: 0;
   width: 22px;
   height: 46px;
   border-radius: 8px;
-  background: #3f485f;
+  background: color-mix(in srgb, #46d3ff calc(var(--speed) * 100%), #3f485f);
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.6);
-  position: absolute;
   transform-origin: center center;
   transition: transform 80ms linear, background 80ms linear;
 }
 
-.wheel.front-left {
-  top: 10px;
-  left: 8px;
+.wheel.reverse {
+  background: color-mix(in srgb, #fbbf24 calc(var(--speed) * 100%), #3f485f);
 }
 
-.wheel.front-right {
-  top: 10px;
-  right: 8px;
-}
-
-.wheel.rear-left {
-  bottom: 10px;
-  left: 8px;
-}
-
-.wheel.rear-right {
-  bottom: 10px;
-  right: 8px;
-}
-
-.throttle-indicator {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.throttle-bar {
-  width: 32px;
-  height: 180px;
-  border-radius: 999px;
-  border: 1px solid #2c3455;
-  background: #050815;
-  overflow: hidden;
-  position: relative;
-}
-
-#throttle-fill {
-  position: absolute;
-  bottom: 50%;
-  width: 100%;
-  height: 0%;
-  background: linear-gradient(to top, #22c55e, #46d3ff);
-  transition: height 80ms ease-out, transform 80ms ease-out;
-}
-
-#throttle-label {
-  margin-top: 0.4rem;
-  font-size: 0.8rem;
+.wheel-rps {
+  font-size: 0.7rem;
   color: #9ca3c7;
+  font-variant-numeric: tabular-nums;
+}
+
+.rover-meta {
+  font-size: 0.9rem;
+}
+
+#drive-mode-value {
+  color: #4fd1c5;
 }
 
 .hint {
@@ -278,34 +255,21 @@ body {
   text-align: left;
 }
 
-.fault-cell.ok,
 .fault-ok {
   color: #4caf50;
   font-weight: bold;
 }
 
-.fault-cell.fault-active,
 .fault-active {
   color: #ff5252;
   font-weight: bold;
 }
 
-.fault-cell.unknown {
-  color: #777;
-}
-
-/* drive mode */
-.drive-mode-indicator {
-  margin-bottom: 10px;
-  font-size: 16px;
-}
-
-.drive-mode-indicator .label {
-  opacity: 0.7;
-  margin-right: 6px;
-}
-
-#drive-mode-value {
+.fault-disconnected {
+  color: #fbbf24;
   font-weight: bold;
-  color: #4fd1c5;
+}
+
+.fault-unknown {
+  color: #777;
 }
