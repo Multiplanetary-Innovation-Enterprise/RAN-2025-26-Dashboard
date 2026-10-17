@@ -13,7 +13,7 @@ WebRTC DataChannels. No WebSocket application transport is used.
 DataChannels:
   cmd        - unordered / unreliable; browser -> Pi teleop commands
   telemetry  - unordered / unreliable; Pi -> browser telemetry
-  control    - ordered / reliable; e-stop, queue, mux, configuration, alerts
+  control    - ordered / reliable; e-stop, mux, configuration, alerts
   heartbeat  - unordered / unreliable; application heartbeat / RTT
 
 Run:
@@ -56,7 +56,7 @@ PROTOCOL_VERSION = "0.3"
 CHANNEL_LABELS = {"cmd", "telemetry", "control", "heartbeat"}
 
 # Browser messages that need a Pi; warn the operator if none is connected.
-PI_BOUND_TYPES = {"cmd", "estop", "queue.drive", "queue.cancel", "mux.request", "set"}
+PI_BOUND_TYPES = {"cmd", "estop", "mux.request", "set"}
 
 
 def _dumps(obj: dict) -> str:
@@ -546,7 +546,7 @@ class DriverStationServer:
             )
             return
 
-        # Queue results, alerts, mux state, etc. use the reliable channel.
+        # Alerts, mux state, etc. use the reliable channel.
         self._broadcast(
             msg,
             "control",
@@ -578,7 +578,6 @@ class DriverStationServer:
                     "server": "laptop",
                     "caps": [
                         "teleop",
-                        "queue",
                         "estop",
                         "webrtc_datachannels",
                     ],

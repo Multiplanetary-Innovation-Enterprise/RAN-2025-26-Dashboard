@@ -8,15 +8,16 @@ class EStopPanel extends HTMLElement {
 
     this.innerHTML = `
       <h3>E-STOP</h3>
-      <div class="row">
+      <div class="estop-actions">
         <button id="btnEstop" class="danger">E-STOP</button>
         <button id="btnEstopClear">Clear</button>
       </div>
-      <div>State: <strong id="estopState" class="estop-unknown">unknown</strong></div>
-      <div>Motion owner: <strong id="owner">?</strong></div>
+      <div class="stat-list">
+        <div class="stat"><span class="stat-label">State</span><strong id="estopState" class="estop-unknown">unknown</strong></div>
+        <div class="stat"><span class="stat-label">Motion owner</span><strong id="owner">?</strong></div>
+      </div>
       <p class="note">
-        Space bar also triggers E-STOP. While latched, the Pi publishes zeroed
-        joystick commands; it does not stop autonomy.
+        Space bar = E-STOP. Holds all drive wheels at 0 (teleop and autonomy).
       </p>
     `;
   }

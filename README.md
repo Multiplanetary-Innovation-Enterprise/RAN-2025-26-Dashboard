@@ -23,7 +23,7 @@ Browser ──WebRTC DataChannels──▶ Laptop relay (server/app.py) ◀─�
 |-------------|-----------------------|----------------|---------------------------------------|
 | `cmd`       | unordered, unreliable | Browser → Pi   | 20 Hz raw controller state            |
 | `telemetry` | unordered, unreliable | Pi → Browser   | 10 Hz telemetry frames                |
-| `control`   | ordered, reliable     | both           | e-stop, queue, mux, config, alerts    |
+| `control`   | ordered, reliable     | both           | e-stop, mux, config, alerts           |
 | `heartbeat` | unordered, unreliable | both           | liveness / RTT                        |
 
 See [`Laptop-Dashboard/README.md`](Laptop-Dashboard/README.md) for details and [`Laptop-Dashboard/wire_protocol.txt`](Laptop-Dashboard/wire_protocol.txt) for every message.
@@ -36,7 +36,7 @@ The browser sends raw Xbox state (`c1_*` for controller 1, `c2_*` for controller
 
 - **Rover Drive card**: steering angle per wheel from uros (`/drivetrain/feedback/wheel_curr`), falling back to the `rover_kinematics` command when feedback is stale. Wheel colour/RPS comes from `kraken_drive` (`/drivetrain/telemetry/wheel_state`).
 - **Wheel cards / fault table**: Kraken wheel state and fault bits.
-- **E-STOP**: latches on the Pi (zeroed `/joy1`/`/joy2`) until cleared; Space bar also triggers it.
+- **E-STOP**: latches on the Pi until cleared; publishes `/estop` so `kraken_drive` holds the drive wheels at 0 RPS (teleop and autonomy), and zeroes `/joy1`/`/joy2`. Space bar also triggers it.
 
 ---
 

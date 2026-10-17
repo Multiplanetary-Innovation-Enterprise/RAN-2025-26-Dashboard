@@ -25,9 +25,9 @@ class RoverVisualPanel extends HTMLElement {
             <span class="wheel-rps" data-rps="${w}">—</span>
           </div>`).join("")}
       </div>
-      <div class="rover-meta">
-        <div>Drive mode: <strong id="drive-mode-value">unknown</strong></div>
-        <div>Steering: <span id="steer-source">no data</span></div>
+      <div class="stat-list">
+        <div class="stat"><span class="stat-label">Drive mode</span><strong id="drive-mode-value">unknown</strong></div>
+        <div class="stat"><span class="stat-label">Steering</span><span id="steer-source">no data</span></div>
       </div>
     `;
 

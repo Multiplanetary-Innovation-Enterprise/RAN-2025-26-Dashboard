@@ -7,17 +7,15 @@ class VideoPanel extends HTMLElement {
         // Use a flex container to place the two video streams side-by-side
         this.innerHTML = `
             <h3>Live Video (WebRTC)</h3>
-            <div style="display: flex; gap: 10px; width: 100%;">
-                <div style="position: relative; flex: 1; height: 240px; background: #000;">
-                    <video id="webrtc-player-1" autoplay muted playsinline 
-                           style="width: 100%; height: 100%; object-fit: contain;"></video>
-                    <div id="videoStats-1" style="position: absolute; top: 5px; left: 5px; color: #0f0; background: rgba(0,0,0,0.5); padding: 2px;">Connecting...</div>
+            <div class="video-grid">
+                <div class="video-frame">
+                    <video id="webrtc-player-1" autoplay muted playsinline></video>
+                    <div id="videoStats-1" class="video-stats">Connecting...</div>
                 </div>
-                
-                <div style="position: relative; flex: 1; height: 240px; background: #000;">
-                    <video id="webrtc-player-2" autoplay muted playsinline 
-                           style="width: 100%; height: 100%; object-fit: contain;"></video>
-                    <div id="videoStats-2" style="position: absolute; top: 5px; left: 5px; color: #0f0; background: rgba(0,0,0,0.5); padding: 2px;">Connecting...</div>
+
+                <div class="video-frame">
+                    <video id="webrtc-player-2" autoplay muted playsinline></video>
+                    <div id="videoStats-2" class="video-stats">Connecting...</div>
                 </div>
             </div>
         `;
