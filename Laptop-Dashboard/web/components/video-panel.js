@@ -27,7 +27,8 @@ class VideoPanel extends HTMLElement {
         
         // Note: Update these paths to match your exact MediaMTX stream names!
         // MediaMTX uses the /whep endpoint for WebRTC signaling.
-        //100.97.255.110 
+        //pi5 tailscale: 100.97.255.110
+        //Comp pi5 + Router: 192.168.1.50
         const host = "100.97.255.110:8889"; 
         this.startStreaming('1', `http://${host}/rover_video_1/whep`);
         this.startStreaming('2', `http://${host}/rover_video_2/whep`);

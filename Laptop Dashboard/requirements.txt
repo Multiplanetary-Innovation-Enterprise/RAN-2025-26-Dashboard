@@ -1,2 +1,0 @@
-websockets==17.1
-aiortc

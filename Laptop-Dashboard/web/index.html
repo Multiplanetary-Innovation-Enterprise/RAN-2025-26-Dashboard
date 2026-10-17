@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Driver Station</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <connection-bar></connection-bar>
+
+    <div class="dashboard-layout">
+      <section class="top-row">
+        <video-panel></video-panel>
+        <arena-panel></arena-panel>
+        <rover-visual-panel></rover-visual-panel>
+      </section>
+
+      <main class="bottom-row">
+        <estop-panel></estop-panel>
+        <telemetry-panel></telemetry-panel>
+        <queue-panel></queue-panel>
+        <bandwidth-panel></bandwidth-panel>
+      </main>
+    </div>
+
+    <div class="wheel-row">
+      <wheel-card wheel="fl" label="Front Left"></wheel-card>
+      <wheel-card wheel="fr" label="Front Right"></wheel-card>
+      <wheel-card wheel="rl" label="Rear Left"></wheel-card>
+      <wheel-card wheel="rr" label="Rear Right"></wheel-card>
+    </div>
+
+    <div class="faults-panel">
+      <h3>Kraken Fault Lookup</h3>
+      <table class="fault-table">
+        <thead>
+          <tr>
+            <th>Motor</th>
+            <th>Fault</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="fault_table_body"></tbody>
+      </table>
+    </div>
+
+    <controller-panel></controller-panel>
+
+    <!-- Chart.js must be a classic script: bandwidth-panel.js uses the global Chart -->
+    <script src="components/chart.js"></script>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

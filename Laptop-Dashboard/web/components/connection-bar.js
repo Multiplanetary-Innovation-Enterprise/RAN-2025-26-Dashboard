@@ -8,6 +8,7 @@ class ConnectionBar extends HTMLElement {
       <header class="bar">
         <button id="btnConnect">Connect</button>
         <span id="connStatus">disconnected</span>
+        <span id="alertMsg"></span>
       </header>
     `;
   }
