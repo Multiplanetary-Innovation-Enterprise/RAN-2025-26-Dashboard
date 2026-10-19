@@ -30,7 +30,7 @@ http://localhost:8765
 
 There is no WebSocket transport.
 
-HTTP is used only for WebRTC SDP signaling while each peer connection is established. After negotiation, rover control, telemetry, queue events, e-stop, and heartbeat traffic use WebRTC DataChannels.
+HTTP is used only for WebRTC SDP signaling while each peer connection is established. After negotiation, rover control, telemetry, e-stop, and heartbeat traffic use WebRTC DataChannels.
 
 WebRTC DataChannels use SCTP over DTLS over UDP.
 
@@ -70,7 +70,7 @@ telemetry
 control
   ordered / reliable
   Both directions
-  e-stop, queue, mux, configuration, alerts
+  e-stop, mux, configuration, alerts
 
 heartbeat
   unordered / unreliable
@@ -107,10 +107,11 @@ WHEP (`http://<pi-ip>:8889/rover_video_{1,2}/whep`). Set the Pi address in
 ## E-stop
 
 E-STOP (button or Space bar) sends `{"t":"estop","value":true}` on the control
-channel. The Pi's `DriveService` latches it and publishes zeroed `/joy1` and
-`/joy2` until cleared with the Clear button. The latch state is shown from
-telemetry (`tlm.estop`). It only gates driver-station joystick input; it does
-not stop autonomy.
+channel. The Pi's `DriveService` latches it, publishes `true` on `/estop`
+(`std_msgs/Bool`, reliable + transient local), and publishes zeroed `/joy1` and
+`/joy2` until cleared with the Clear button. `kraken_drive` holds every drive
+wheel at 0 RPS while `/estop` is `true`, so it stops autonomy as well as teleop.
+The latch state is shown from telemetry (`tlm.estop`).
 
 ## Project Structure
 

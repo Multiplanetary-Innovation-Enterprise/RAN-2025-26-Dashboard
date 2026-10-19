@@ -2,7 +2,7 @@
       1) Open a WebRTC PeerConnection to the laptop relay.
       2) Send teleop commands (20 Hz) and heartbeats (5 Hz) over DataChannels.
       3) Render incoming telemetry, faults, and alerts.
-      4) E-stop and queue buttons.
+      4) E-stop buttons.
 
     HTTP is used only for WebRTC SDP signaling. There is no WebSocket transport.
 */
@@ -15,6 +15,20 @@ const HEARTBEAT_PERIOD_MS = 200;    // 5 Hz
 const MAX_RECONNECT_DELAY_MS = 5000;
 const HANDSHAKE_TIMEOUT_MS = 10000;
 const ALERT_CLEAR_MS = 8000;
+
+// Link health monitor (connection bar)
+const LINK_RENDER_MS = 250;
+const HB_LOSS_TIMEOUT_MS = 1000;    // an unanswered heartbeat counts as lost
+const HB_LOSS_WINDOW = 25;          // ~5 s of heartbeats at 5 Hz
+const HB_LOSS_WARN_PCT = 10;
+const LINK_WARN_AGE_MS = 600;       // ~3 missed heartbeats / 6 telemetry frames
+const LINK_LOST_AGE_MS = 1500;
+const PI_RTT_WARN_MS = 150;
+const WIFI_WARN_DBM = -67;          // weaker than this: video starts to suffer
+const WIFI_BAD_DBM = -75;           // weaker than this: drops are likely
+const WIFI_TREND_MS = 10000;        // signal history used for the trend
+const WIFI_TREND_MIN_MS = 5000;     // history needed before showing a trend
+const WIFI_TREND_DB_PER_S = 0.6;    // ~6 dB per 10 s counts as rising / falling
 
 // Must match the laptop relay and the Pi's NetworkHandler.
 const CHANNEL_OPTIONS = {
@@ -57,7 +71,16 @@ let reconnectDelayMs = 1000;
 let teleopCmd = {};
 let lastCmdSentMs = 0;
 let lastHeartbeatId = 0;
-let queueSeq = 0;
+
+let connectedAt = null;     // performance.now() when the session came up
+let hbPending = new Map();  // heartbeat id -> performance.now() at send
+let hbOutcomes = [];        // recent heartbeats: true = acked, false = lost
+let hbRttMs = null;         // latest browser <-> laptop RTT
+let lastHbAckAt = null;
+let lastTlmAt = null;
+let piRttMs = null;         // Pi <-> laptop RTT, reported in telemetry
+let wifi = null;            // latest tlm.wifi (Pi <-> router)
+let wifiHistory = [];       // [{ at, dbm }] covering the trend window
 
 let latestFaults = null;
 let faultCells = {};   // "fl/brownout" -> <td>
@@ -99,6 +122,7 @@ function waitForIceGatheringComplete(peer) {
 
 function closePeerConnection() {
   isConnected = false;
+  resetLinkHealth();
 
   for (const channel of Object.values(channels)) {
     try { channel.close(); } catch (_) { /* already closed */ }
@@ -131,6 +155,7 @@ function markConnectionState() {
   if (peerConnected && channelOpen("cmd") && channelOpen("control")) {
     if (!isConnected) {
       isConnected = true;
+      connectedAt = performance.now();
       reconnectDelayMs = 1000;
       setText("#connStatus", "connected");
 
@@ -291,7 +316,9 @@ function send(channelName, obj) {
 function heartbeatLoop() {
   if (channelOpen("heartbeat")) {
     lastHeartbeatId += 1;
-    send("heartbeat", { t: "hb", id: lastHeartbeatId, ts_ms: Date.now() });
+    if (send("heartbeat", { t: "hb", id: lastHeartbeatId, ts_ms: Date.now() })) {
+      hbPending.set(lastHeartbeatId, performance.now());
+    }
   }
 }
 
@@ -317,17 +344,14 @@ function cmdLoop() {
 // Incoming messages
 // ------------------------------------------------------------
 
-// hello / hello.ack / hb.ack need no handling.
+// hello / hello.ack need no handling.
 function handleServerMessage(m) {
   switch (m.t) {
     case "tlm":
       handleTelemetry(m);
       break;
-    case "queue.state":
-      renderQueueState(m);
-      break;
-    case "queue.result":
-      setText("#queueResult", `last result: ${m.success ? "success" : "fail"} (${m.reason || ""})`);
+    case "hb.ack":
+      onHeartbeatAck(m);
       break;
     case "alert":
       showAlert(m.level, m.msg);
@@ -336,14 +360,12 @@ function handleServerMessage(m) {
 }
 
 // Telemetry frame fields (see wire_protocol.txt):
-//   mux, imu, enc, bat, net, queue, estop, faults, wheel_state, drive_mode
+//   mux, net, estop, faults, wheel_state, drive_mode, wifi
 function handleTelemetry(m) {
+  lastTlmAt = performance.now();
+  if (m.wifi) onWifiSample(m.wifi);
   if (m.mux) setText("#owner", m.mux);
-  if (m.imu?.rpy) setText("#imuRpy", m.imu.rpy.map(v => v.toFixed(2)).join(", "));
-  if (m.enc) setText("#encRps", `${(m.enc.l_rps ?? 0).toFixed(2)} / ${(m.enc.r_rps ?? 0).toFixed(2)}`);
-  if (m.bat) setText("#battery", `${(m.bat.v ?? 0).toFixed(2)} V, ${(m.bat.i ?? 0).toFixed(2)} A`);
   if (typeof m.estop === "boolean") renderEstop(m.estop);
-  if (m.queue) renderQueueState(m.queue);
 
   if (m.faults) {
     latestFaults = m.faults;
@@ -366,14 +388,14 @@ function handleTelemetry(m) {
 }
 
 function handleNetStats(net) {
+  if (Number.isFinite(net.rtt_ms)) piRttMs = net.rtt_ms;
+
   const ctl = net.ctl_kbps ?? 0;
   const tlm = net.tlm_kbps ?? 0;
   const vid = net.vid_kbps ?? 0;
   const ctlAvg = net.ctl_kbps_avg ?? 0;
   const tlmAvg = net.tlm_kbps_avg ?? 0;
   const vidAvg = net.vid_kbps_avg ?? 0;
-
-  setText("#netKbps", `${ctl} | ${tlm} | ${vid} (avg: ${ctlAvg} | ${tlmAvg} | ${vidAvg})`);
 
   // kbps -> Mbps for bandwidth-panel.js
   window.dispatchEvent(new CustomEvent("bandwidth", {
@@ -386,10 +408,167 @@ function handleNetStats(net) {
   }));
 }
 
-function renderQueueState(q) {
-  const progress = Math.round((q.active?.progress ?? 0) * 100);
-  const pending = Array.isArray(q.pending) ? q.pending.length : (q.pending ?? 0);
-  setText("#queueState", q.active ? `active: ${progress}% | pending: ${pending}` : `idle | pending: ${pending}`);
+// ------------------------------------------------------------
+// Link health (heartbeat monitor)
+//   Laptop: browser <-> laptop relay heartbeats (RTT, loss, last reply)
+//   Rover:  laptop <-> Pi, from the Pi's heartbeat RTT and telemetry age
+//   Wi-Fi:  Pi <-> router signal strength and its trend (tlm.wifi)
+// ------------------------------------------------------------
+
+function resetLinkHealth() {
+  connectedAt = null;
+  hbPending.clear();
+  hbOutcomes = [];
+  hbRttMs = null;
+  lastHbAckAt = null;
+  lastTlmAt = null;
+  piRttMs = null;
+  wifi = null;
+  wifiHistory = [];
+}
+
+function recordHeartbeat(acked) {
+  hbOutcomes.push(acked);
+  if (hbOutcomes.length > HB_LOSS_WINDOW) hbOutcomes.shift();
+}
+
+function onHeartbeatAck(m) {
+  const sentAt = hbPending.get(m.id);
+  if (sentAt === undefined) return;   // already counted as lost
+
+  hbPending.delete(m.id);
+  lastHbAckAt = performance.now();
+  hbRttMs = lastHbAckAt - sentAt;
+  recordHeartbeat(true);
+}
+
+function renderLink(sel, state, detail) {
+  const el = $(sel);
+  if (!el) return;
+  el.dataset.state = state;
+  el.querySelector(".link-detail").textContent = detail;
+}
+
+const fmtRtt = ms => (ms < 1 ? "<1 ms" : `${Math.round(ms)} ms`);
+const fmtAge = ms => `${(ms / 1000).toFixed(1)} s`;
+
+function renderLinkHealth() {
+  const now = performance.now();
+
+  for (const [id, sentAt] of hbPending) {
+    if (now - sentAt > HB_LOSS_TIMEOUT_MS) {
+      hbPending.delete(id);
+      recordHeartbeat(false);
+    }
+  }
+
+  if (connectedAt === null) {
+    renderLink("#linkLaptop", "off", "—");
+    renderLink("#linkRover", "off", "—");
+    renderLink("#linkWifi", "off", "—");
+    return;
+  }
+
+  const hbAge = now - (lastHbAckAt ?? connectedAt);
+  const lost = hbOutcomes.filter(acked => !acked).length;
+  const lossPct = hbOutcomes.length ? Math.round(100 * lost / hbOutcomes.length) : 0;
+
+  if (hbAge > LINK_LOST_AGE_MS) {
+    renderLink("#linkLaptop", "bad", `no reply ${fmtAge(hbAge)}`);
+  } else if (hbRttMs === null) {
+    renderLink("#linkLaptop", "warn", "waiting");
+  } else {
+    const degraded = hbAge > LINK_WARN_AGE_MS || lossPct >= HB_LOSS_WARN_PCT;
+    renderLink("#linkLaptop", degraded ? "warn" : "ok", `${fmtRtt(hbRttMs)} · ${lossPct}% loss`);
+  }
+
+  const tlmAge = now - (lastTlmAt ?? connectedAt);
+
+  if (tlmAge > LINK_LOST_AGE_MS) {
+    renderLink("#linkRover", "bad", `no data ${fmtAge(tlmAge)}`);
+  } else if (lastTlmAt === null) {
+    renderLink("#linkRover", "warn", "waiting");
+  } else {
+    const rtt = piRttMs === null ? "—" : fmtRtt(piRttMs);
+    const stale = tlmAge > LINK_WARN_AGE_MS;
+    const degraded = stale || piRttMs >= PI_RTT_WARN_MS;
+    renderLink("#linkRover", degraded ? "warn" : "ok", stale ? `${rtt} · data ${fmtAge(tlmAge)} old` : rtt);
+  }
+
+  renderWifi(tlmAge);
+}
+
+function onWifiSample(w) {
+  wifi = w;
+  if (!w.connected || !Number.isFinite(w.signal_dbm)) return;
+
+  const now = performance.now();
+  wifiHistory.push({ at: now, dbm: w.signal_dbm });
+  while (now - wifiHistory[0].at > WIFI_TREND_MS) wifiHistory.shift();
+}
+
+// Least-squares slope of the signal in dB/s (smooths out RSSI jitter);
+// 0 until WIFI_TREND_MIN_MS of history exists.
+function wifiSlopeDbPerS() {
+  const n = wifiHistory.length;
+  if (n < 2 || wifiHistory[n - 1].at - wifiHistory[0].at < WIFI_TREND_MIN_MS) return 0;
+
+  const t0 = wifiHistory[0].at;
+  let st = 0, sd = 0, stt = 0, std = 0;
+  for (const { at, dbm } of wifiHistory) {
+    const t = (at - t0) / 1000;
+    st += t;
+    sd += dbm;
+    stt += t * t;
+    std += t * dbm;
+  }
+
+  const denom = n * stt - st * st;
+  return denom ? (n * std - st * sd) / denom : 0;
+}
+
+// Pi <-> router Wi-Fi. A falling trend raises a warning before the level
+// itself is bad, which is the early sign of an approaching drop.
+function renderWifi(tlmAge) {
+  const el = $("#linkWifi");
+  if (!el) return;
+
+  el.title = "Pi ⇄ router Wi-Fi signal (1 Hz). " +
+    `Green ≥ ${WIFI_WARN_DBM} dBm, amber to ${WIFI_BAD_DBM}, red below; ` +
+    `↓/↑ = changing ${WIFI_TREND_DB_PER_S * 10}+ dB per 10 s.`;
+
+  if (!wifi) {
+    renderLink("#linkWifi", "off", lastTlmAt === null ? "—" : "not reported");
+    return;
+  }
+
+  const dbm = wifi.signal_dbm;
+
+  if (tlmAge > LINK_LOST_AGE_MS) {
+    renderLink("#linkWifi", "off", Number.isFinite(dbm) ? `last ${dbm} dBm` : "—");
+    return;
+  }
+
+  if (!wifi.connected || !Number.isFinite(dbm)) {
+    renderLink("#linkWifi", "bad", wifi.error ? "read error" : "not associated");
+    if (wifi.error) el.title += `\n${wifi.error}`;
+    return;
+  }
+
+  const slope = wifiSlopeDbPerS();
+  const falling = slope <= -WIFI_TREND_DB_PER_S;
+  const arrow = falling ? " ↓" : slope >= WIFI_TREND_DB_PER_S ? " ↑" : "";
+  const state = dbm < WIFI_BAD_DBM ? "bad" : (dbm < WIFI_WARN_DBM || falling) ? "warn" : "ok";
+  const rate = Number.isFinite(wifi.tx_mbps) ? ` · ${Math.round(wifi.tx_mbps)} Mb/s` : "";
+
+  renderLink("#linkWifi", state, `${dbm} dBm${arrow}${rate}`);
+
+  const details = [
+    wifi.ssid && `SSID ${wifi.ssid}`,
+    Number.isFinite(wifi.freq_mhz) && `${(wifi.freq_mhz / 1000).toFixed(2)} GHz`,
+    Number.isFinite(wifi.rx_mbps) && `rx ${Math.round(wifi.rx_mbps)} / tx ${Math.round(wifi.tx_mbps)} Mb/s`,
+  ].filter(Boolean);
+  if (details.length) el.title += `\n${details.join(" · ")}`;
 }
 
 function renderEstop(latched) {
@@ -489,18 +668,6 @@ function bindControls() {
     if (confirm("Clear E-STOP and allow motion?")) sendEstop(false);
   };
 
-  $("#btnEnqueue").onclick = () => {
-    queueSeq += 1;
-    send("control", {
-      t: "queue.drive",
-      id: `drive-${queueSeq}`,
-      distance_m: parseFloat($("#inDistance").value),
-      heading_deg: parseFloat($("#inHeading").value),
-      max_speed_mps: parseFloat($("#inMaxSpeed").value),
-    });
-  };
-  $("#btnCancel").onclick = () => send("control", { t: "queue.cancel" });
-
   // Space = E-STOP. Swallow keyup too so Space never "clicks" a focused button
   // (e.g. Clear).
   const onSpace = (e, fire) => {
@@ -519,6 +686,7 @@ function main() {
   // These loops run for the lifetime of the page and simply stop
   // transmitting while the WebRTC transport is unavailable.
   setInterval(heartbeatLoop, HEARTBEAT_PERIOD_MS);
+  setInterval(renderLinkHealth, LINK_RENDER_MS);
   cmdLoop();
 }
 

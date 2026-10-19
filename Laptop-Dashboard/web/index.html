@@ -9,16 +9,19 @@
     <connection-bar></connection-bar>
 
     <div class="dashboard-layout">
+      <!-- Everything in .top-row must fit on screen without scrolling -->
       <section class="top-row">
         <video-panel></video-panel>
-        <arena-panel></arena-panel>
-        <rover-visual-panel></rover-visual-panel>
+        <div class="side-stack">
+          <estop-panel></estop-panel>
+          <div class="mini-row">
+            <rover-visual-panel></rover-visual-panel>
+            <arena-panel></arena-panel>
+          </div>
+        </div>
       </section>
 
       <main class="bottom-row">
-        <estop-panel></estop-panel>
-        <telemetry-panel></telemetry-panel>
-        <queue-panel></queue-panel>
         <bandwidth-panel></bandwidth-panel>
       </main>
     </div>
