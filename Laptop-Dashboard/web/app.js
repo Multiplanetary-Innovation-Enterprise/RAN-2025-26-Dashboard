@@ -231,7 +231,17 @@ async function connectWebRTC() {
   closePeerConnection();
   setText("#connStatus", "connecting");
 
-  const peer = new RTCPeerConnection();
+  // Firefox throws here when it thinks the network is down (e.g. on a router
+  // with no internet uplink) -- surface that instead of sitting in "connecting".
+  let peer;
+  try {
+    peer = new RTCPeerConnection();
+  } catch (err) {
+    console.error("[WebRTC] could not create peer connection:", err);
+    scheduleReconnect();
+    setText("#connStatus", `connection failed: ${err.message}`);
+    return;
+  }
   pc = peer;
 
   peer.onconnectionstatechange = () => {

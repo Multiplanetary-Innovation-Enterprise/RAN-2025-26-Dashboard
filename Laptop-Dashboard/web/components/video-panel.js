@@ -22,12 +22,14 @@ class VideoPanel extends HTMLElement {
         
         // Store RTCPeerConnection instances to manage lifecycles
         this.peerConnections = {};
+        // One pending retry timer per stream, so failures can't fork extra retry chains.
+        this.retryTimers = {};
         
         // Note: Update these paths to match your exact MediaMTX stream names!
         // MediaMTX uses the /whep endpoint for WebRTC signaling.
         //pi5 tailscale: 100.97.255.110
         //Comp pi5 + Router: 192.168.1.50
-        const host = "100.97.255.110:8889"; 
+        const host = "192.168.1.50:8889"; 
         this.startStreaming('1', `http://${host}/rover_video_1/whep`);
         this.startStreaming('2', `http://${host}/rover_video_2/whep`);
     }
@@ -36,12 +38,18 @@ async startStreaming(streamId, url) {
         const videoElement = this.querySelector(`#webrtc-player-${streamId}`);
         const statsUI = this.querySelector(`#videoStats-${streamId}`);
 
+        clearTimeout(this.retryTimers[streamId]);
+        delete this.retryTimers[streamId];
+
         if (this.peerConnections[streamId]) {
             this.peerConnections[streamId].close();
         }
 
         const pc = new RTCPeerConnection();
         this.peerConnections[streamId] = pc;
+
+        // Events from a replaced peer must not schedule another retry.
+        const isCurrent = () => this.peerConnections[streamId] === pc;
 
         pc.addTransceiver('video', { direction: 'recvonly' });
 
@@ -50,11 +58,12 @@ async startStreaming(streamId, url) {
         };
 
         pc.onconnectionstatechange = () => {
+            if (!isCurrent()) return;
             if (pc.connectionState === 'connected') {
                 statsUI.innerText = `Cam ${streamId}: Live`;
             } else if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
                 statsUI.innerText = `Cam ${streamId}: Disconnected`;
-                setTimeout(() => this.startStreaming(streamId, url), 2000);
+                this.scheduleRetry(streamId, url);
             } else {
                 statsUI.innerText = `Cam ${streamId}: ${pc.connectionState}...`;
             }
@@ -64,6 +73,10 @@ async startStreaming(streamId, url) {
         let lastRtt = "0"; // Store RTT outside the loop to remember it between updates
 
         const statsInterval = setInterval(async () => {
+            if (pc.connectionState === 'closed') {
+                clearInterval(statsInterval);
+                return;
+            }
             if (pc.connectionState !== 'connected') return;
             
             try {
@@ -110,7 +123,10 @@ async startStreaming(streamId, url) {
                 body: offer.sdp
             });
 
-            if (!response.ok) throw new Error("MediaMTX rejected the WebRTC offer");
+            if (!response.ok) {
+                const reason = response.status === 404 ? "nothing is publishing this stream" : `HTTP ${response.status}`;
+                throw new Error(`MediaMTX rejected the WebRTC offer (${reason})`);
+            }
 
             const answerSdp = await response.text();
             await pc.setRemoteDescription({
@@ -119,13 +135,25 @@ async startStreaming(streamId, url) {
             });
 
         } catch (err) {
+            if (!isCurrent()) return;
             console.warn(`Stream ${streamId} failed to connect:`, err);
             statsUI.innerText = `Cam ${streamId}: Retry...`;
-            setTimeout(() => this.startStreaming(streamId, url), 2000);
+            this.scheduleRetry(streamId, url);
         }
     }
 
+    scheduleRetry(streamId, url) {
+        if (this.retryTimers[streamId]) return;
+        this.retryTimers[streamId] = setTimeout(() => {
+            delete this.retryTimers[streamId];
+            this.startStreaming(streamId, url);
+        }, 2000);
+    }
+
     disconnectedCallback() {
+        for (let id in this.retryTimers) clearTimeout(this.retryTimers[id]);
+        this.retryTimers = {};
+
         // Cleanly close all WebRTC connections when the component is removed
         for (let id in this.peerConnections) {
             if (this.peerConnections[id]) {
