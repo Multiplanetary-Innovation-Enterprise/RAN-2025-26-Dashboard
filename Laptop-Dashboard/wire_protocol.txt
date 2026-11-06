@@ -19,7 +19,6 @@ Supports:
   - low-latency teleop commands (<= 20 Hz)
   - configurable telemetry stream (default 10 Hz)
   - e-stop
-  - action queue (drive goals)
   - alerts
   - ownership/mux (teleop vs auton)
   - connection heartbeat / RTT
@@ -50,10 +49,6 @@ Timing / Identity
 Units
   cmd.c*_lx : linear-x command, meters/second
   cmd.c*_az : angular-z command, radians/second
-  imu.rpy   : roll/pitch/yaw, radians
-  enc.*     : wheel speeds, revolutions/second
-  bat.v     : volts
-  bat.i     : amps
   net.*     : kbps, milliseconds
 
 Behavior rules
@@ -97,21 +92,11 @@ Behavior rules
 4) Set / reconfigure telemetry stream
   Channel: control
 { "t":"set", "telemetry_hz":10,
-  "tlm_fields":["imu","enc","bat","net","mux","queue"] }
+  "tlm_fields":["net","mux"] }
 
 5) Mux / ownership request
   Channel: control
 { "t":"mux.request", "ts_ms":12345690, "mode":"teleop" }
-
-6) Queue a drive action
-  Channel: control
-{ "t":"queue.drive", "id":"drive-17",
-  "distance_m":1.0, "heading_deg":0,
-  "max_speed_mps":0.4 }
-
-7) Cancel current queue action
-  Channel: control
-{ "t":"queue.cancel", "ts_ms":12345700 }
 
 # -----------------------------------------------------------------------------
 # Pi -> Laptop/Browser
@@ -123,7 +108,7 @@ Behavior rules
   "t":"hello.ack",
   "ver":"0.3",
   "client":"pi",
-  "caps":["telemetry","teleop","queue","estop","webrtc_datachannels"]
+  "caps":["telemetry","teleop","estop","webrtc_datachannels"]
 }
 
 2) Heartbeat acknowledgement
@@ -147,10 +132,6 @@ Behavior rules
   "mux":"teleop",
   "estop":false,
 
-  "imu":{"rpy":[0.02,0.01,1.57]},
-  "enc":{"l_rps":1.22,"r_rps":1.19},
-  "bat":{"v":11.9,"i":1.2},
-
   "net":{
     "ctl_kbps":8,
     "tlm_kbps":22,
@@ -164,8 +145,6 @@ Behavior rules
     "c2_lx":0.0,
     "c2_az":0.0
   },
-
-  "queue":{"active":null,"pending":[]},
 
   "faults":{                         // kraken_drive, per wheel fl/fr/rl/rr
     "fl":{"connected":true,"enabled":true,"fault":false,
@@ -185,34 +164,23 @@ Behavior rules
     "age_sec":0.02
   },
 
-  "drive_mode":{"drive_mode":"ackermann","drive_mode_age":3.4}
+  "drive_mode":{"drive_mode":"ackermann","drive_mode_age":3.4},
+
+  "wifi":{                           // Pi <-> router, sampled at 1 Hz
+    "iface":"wlan0","connected":true,
+    "signal_dbm":-58,"link_quality":52,   // /proc/net/wireless
+    "ssid":"RAN","freq_mhz":5180.0,       // ssid, freq, and rates only
+    "rx_mbps":390.0,"tx_mbps":433.3,      //   if `iw` is installed
+    "age_s":0.4
+  }
 }
 
-5) Queue state
-  Channel: control
-{
-  "t":"queue.state",
-  "ts_ms":12345720,
-  "active":{"id":"drive-17","progress":0.42,"remaining_m":1.10},
-  "pending":[{"id":"drive-18"},{"id":"drive-19"}]
-}
-
-6) Queue result
-  Channel: control
-{
-  "t":"queue.result",
-  "ts_ms":12345740,
-  "id":"drive-17",
-  "success":true,
-  "reason":"Done"
-}
-
-7) Alerts / warnings / errors
+5) Alerts / warnings / errors
   Channel: control
 {
   "t":"alert",
   "level":"warn",
-  "msg":"IMU timeout 200 ms"
+  "msg":"telemetry timeout 200 ms"
 }
 
 # -----------------------------------------------------------------------------

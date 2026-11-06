@@ -12,12 +12,14 @@ class WheelCard extends HTMLElement {
 
     this.innerHTML = `
       <h3>${this.getAttribute("label") ?? ""}</h3>
-      <div>RPS: <span data-f="rps">—</span></div>
-      <div>Cmd: <span data-f="cmd">—</span></div>
-      <div>Steer: <span data-f="steer">—</span></div>
-      <div>Current: <span data-f="current">—</span></div>
-      <div>Temp: <span data-f="temp">—</span></div>
-      <div>Status: <span data-f="fault">—</span></div>
+      <div class="stat-list">
+        <div class="stat"><span class="stat-label">RPS</span><span data-f="rps">—</span></div>
+        <div class="stat"><span class="stat-label">Cmd</span><span data-f="cmd">—</span></div>
+        <div class="stat"><span class="stat-label">Steer</span><span data-f="steer">—</span></div>
+        <div class="stat"><span class="stat-label">Current</span><span data-f="current">—</span></div>
+        <div class="stat"><span class="stat-label">Temp</span><span data-f="temp">—</span></div>
+        <div class="stat"><span class="stat-label">Status</span><span data-f="fault">—</span></div>
+      </div>
     `;
 
     this._el = {};

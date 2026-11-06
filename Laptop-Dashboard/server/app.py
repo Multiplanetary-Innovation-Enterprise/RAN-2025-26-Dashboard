@@ -13,7 +13,7 @@ WebRTC DataChannels. No WebSocket application transport is used.
 DataChannels:
   cmd        - unordered / unreliable; browser -> Pi teleop commands
   telemetry  - unordered / unreliable; Pi -> browser telemetry
-  control    - ordered / reliable; e-stop, queue, mux, configuration, alerts
+  control    - ordered / reliable; e-stop, mux, configuration, alerts
   heartbeat  - unordered / unreliable; application heartbeat / RTT
 
 Run:
@@ -35,7 +35,24 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
-from aiortc import RTCPeerConnection, RTCSessionDescription
+from aiortc import (
+    RTCConfiguration,
+    RTCPeerConnection,
+    RTCSessionDescription,
+    rtcsctptransport,
+)
+from aiortc.rtcsctptransport import WEBRTC_DCEP
+
+# aiortc uses the SCTP RFC's 1 s minimum retransmit timeout. A Wi-Fi blip that
+# loses one send window (~1 telemetry frame) then freezes every DataChannel for
+# that full second: nothing new can be sent, so nothing gets ACKed. Link RTT is
+# ~10 ms; the RTT-based timeout still applies above this floor.
+rtcsctptransport.SCTP_RTO_MIN = 0.2
+
+# Host candidates only. The laptop and Pi reach each other directly (same LAN
+# or Tailscale), so a STUN server adds nothing, and aiortc's default Google
+# STUN lookup holds up every (re)connect for ~5 s while ICE gathers.
+ICE_CONFIG = RTCConfiguration(iceServers=[])
 
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parent.parent
@@ -56,7 +73,7 @@ PROTOCOL_VERSION = "0.3"
 CHANNEL_LABELS = {"cmd", "telemetry", "control", "heartbeat"}
 
 # Browser messages that need a Pi; warn the operator if none is connected.
-PI_BOUND_TYPES = {"cmd", "estop", "queue.drive", "queue.cancel", "mux.request", "set"}
+PI_BOUND_TYPES = {"cmd", "estop", "mux.request", "set"}
 
 
 def _dumps(obj: dict) -> str:
@@ -79,6 +96,34 @@ def _decode_json(data) -> dict | None:
         return None
 
     return obj if isinstance(obj, dict) else None
+
+
+def _drop_unsent(channel) -> None:
+    """
+    Drop this channel's messages that aiortc has queued but not yet sent.
+
+    aiortc keeps one unbounded FIFO for every DataChannel on a connection, and
+    maxRetransmits=0 only stops retransmission, not queueing. During a Wi-Fi
+    stall, 20 Hz cmd / 10 Hz telemetry pile up there and are replayed seconds
+    late when the link returns (or never catch up on a slow link). For
+    latest-value channels only the newest message matters, so discard the rest.
+
+    Uses aiortc 1.15 internals; does nothing if they change.
+    """
+    queue = getattr(getattr(channel, "transport", None), "_data_channel_queue", None)
+    if not queue:
+        return
+
+    kept = []
+    for item in queue:
+        ch, protocol, user_data = item
+        if ch is channel and protocol != WEBRTC_DCEP:
+            channel._addBufferedAmount(-len(user_data))
+        else:
+            kept.append(item)
+
+    queue.clear()
+    queue.extend(kept)
 
 
 class StaticRequestHandler(SimpleHTTPRequestHandler):
@@ -260,7 +305,7 @@ class DriverStationServer:
                 announce=False,
             )
 
-        pc = RTCPeerConnection()
+        pc = RTCPeerConnection(ICE_CONFIG)
         self.pi_pc = pc
         self.pi_channels = {}
 
@@ -338,7 +383,7 @@ class DriverStationServer:
         sdp: str,
         sdp_type: str,
     ) -> dict:
-        pc = RTCPeerConnection()
+        pc = RTCPeerConnection(ICE_CONFIG)
 
         self.browser_pcs[browser_id] = pc
         self.browser_channels[browser_id] = {}
@@ -457,6 +502,8 @@ class DriverStationServer:
             return False
 
         try:
+            if channel.maxRetransmits == 0:
+                _drop_unsent(channel)
             channel.send(_dumps(obj))
             return True
         except Exception as e:
@@ -546,7 +593,7 @@ class DriverStationServer:
             )
             return
 
-        # Queue results, alerts, mux state, etc. use the reliable channel.
+        # Alerts, mux state, etc. use the reliable channel.
         self._broadcast(
             msg,
             "control",
@@ -578,7 +625,6 @@ class DriverStationServer:
                     "server": "laptop",
                     "caps": [
                         "teleop",
-                        "queue",
                         "estop",
                         "webrtc_datachannels",
                     ],

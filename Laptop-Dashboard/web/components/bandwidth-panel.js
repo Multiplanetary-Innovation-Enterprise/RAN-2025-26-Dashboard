@@ -41,6 +41,12 @@ class BandwidthPanel extends HTMLElement {
   initChart(canvas) {
     const ctx = canvas.getContext("2d");
 
+    // Pull colors from the theme tokens in style.css
+    const css = getComputedStyle(document.documentElement);
+    const token = (name) => css.getPropertyValue(name).trim();
+    const muted = token("--text-muted");
+    const grid = token("--border");
+
     this.chart = new Chart(ctx, {
       type: "line",
       data: {
@@ -51,6 +57,7 @@ class BandwidthPanel extends HTMLElement {
             label: "Instantaneous",
             data: [],
             borderWidth: 1,
+            borderColor: token("--text-muted"),
             tension: 0.25,
             pointRadius: 0
           },
@@ -59,7 +66,8 @@ class BandwidthPanel extends HTMLElement {
           {
             label: "Average",
             data: [],
-            borderWidth: 3,
+            borderWidth: 2.5,
+            borderColor: token("--accent"),
             tension: 0.15,
             pointRadius: 0
           }
@@ -75,20 +83,28 @@ class BandwidthPanel extends HTMLElement {
             max: 4,
             title: {
               display: true,
-              text: "Mb/s"
+              text: "Mb/s",
+              color: muted
             },
             ticks: {
-              stepSize: 0.1
-            }
+              stepSize: 0.1,
+              color: muted
+            },
+            grid: { color: grid },
+            border: { color: grid }
           },
           x: {
             title: {
               display: true,
-              text: "Time (s)"
+              text: "Time (s)",
+              color: muted
             },
             ticks: {
-              maxTicksLimit: 6
-            }
+              maxTicksLimit: 6,
+              color: muted
+            },
+            grid: { color: grid },
+            border: { color: grid }
           }
         },
         plugins: {
