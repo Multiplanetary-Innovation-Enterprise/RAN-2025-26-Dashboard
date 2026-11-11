@@ -4,6 +4,7 @@
 
 import "./components/connection-bar.js";
 import "./components/page-menu.js";
+import "./components/record-button.js";
 import "./components/video-panel.js";
 import "./components/arena-panel.js";
 import "./components/rover-visual-panel.js";

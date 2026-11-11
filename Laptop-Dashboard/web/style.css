@@ -152,6 +152,7 @@ estop-panel .stat-list { display: grid; grid-template-columns: 1fr 1fr; }
    ------------------------------------------------------------ */
 .bar {
   display: flex;
+  flex-wrap: wrap;   /* narrow windows: record/menu buttons drop to a second line */
   gap: 0.85rem;
   align-items: center;
   margin: 0.75rem 0.75rem 0;
@@ -244,18 +245,53 @@ page-menu { position: relative; flex: none; }
 .menu-list a[aria-current="page"] { color: var(--accent-bright); background: var(--accent-dim); }
 
 /* ------------------------------------------------------------
+   CSV record button (connection bar)
+   ------------------------------------------------------------ */
+record-button { flex: none; }
+
+/* Record + page menu stay together at the right, even when the bar wraps */
+.bar-actions { display: flex; align-items: center; gap: 0.6rem; margin-left: auto; }
+
+.rec-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.rec-button[data-state="recording"] {
+  color: var(--text);
+  border-color: rgba(240, 82, 75, 0.6);
+  background: rgba(240, 82, 75, 0.12);
+}
+.rec-button[data-state="recording"] .rec-dot {
+  background: var(--danger);
+  animation: rec-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes rec-pulse { 50% { opacity: 0.35; } }
+
+/* ------------------------------------------------------------
    Diagnostics page
    ------------------------------------------------------------ */
 .diag-summary {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 0.75rem;
   padding: 0.75rem;
 }
 
 .diag-charts {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.75rem;
   padding: 0 0.75rem 0.75rem;
 }
@@ -267,6 +303,11 @@ page-menu { position: relative; flex: none; }
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+}
+
+@media (max-width: 1300px) {
+  .diag-summary { grid-template-columns: repeat(3, 1fr); }
+  .diag-charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 900px) {

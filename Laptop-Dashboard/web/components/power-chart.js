@@ -1,7 +1,8 @@
 // components/power-chart.js
-// Rolling power-draw line chart fed by the "power" window event from app.js.
-//   <power-chart source="motors"></power-chart>  one line per drive Kraken
-//   <power-chart source="pi"></power-chart>      Raspberry Pi board power
+// Rolling power line chart fed by the "power" window event from app.js.
+//   <power-chart source="motors"></power-chart>      power per drive Kraken
+//   <power-chart source="efficiency"></power-chart>  efficiency per drive Kraken
+//   <power-chart source="pi"></power-chart>          Raspberry Pi board power
 // Uses the global Chart (components/chart.js).
 
 const WINDOW_S = 30;
@@ -21,13 +22,24 @@ const SOURCES = {
     hint: "Battery-side power per Kraken: supply voltage X supply current. Negative values are regenerative braking.",
     series: MOTOR_SERIES,
     read: d => d.motors && MOTOR_SERIES.map(s => d.motors[s.key]),
+    unit: "W",
     suggestedMax: 50,
+  },
+  efficiency: {
+    title: "Drive Motor Efficiency (%)",
+    hint: "Rotor mechanical power ÷ winding electrical power (motor only, no gearbox). Gaps: idle or regenerating.",
+    series: MOTOR_SERIES,
+    read: d => d.efficiency && MOTOR_SERIES.map(s => d.efficiency[s.key]),
+    unit: "%",
+    min: 0,
+    max: 100,
   },
   pi: {
     title: "Raspberry Pi Power (W)",
     hint: "Pi 5 PMIC rails, sampled at 1 Hz. Excludes USB devices and HATs powered through the Pi.",
     series: [{ key: "pi", label: "Raspberry Pi", color: null }],  // null = theme accent
     read: d => (typeof d.pi_w === "number" ? [d.pi_w] : null),
+    unit: "W",
     suggestedMax: 10,
     stepped: true,
   },
@@ -83,7 +95,9 @@ class PowerChart extends HTMLElement {
           y: {
             suggestedMin: 0,
             suggestedMax: this._src.suggestedMax,
-            title: { display: true, text: "W", color: muted },
+            min: this._src.min,
+            max: this._src.max,
+            title: { display: true, text: this._src.unit, color: muted },
             ticks: { color: muted },
             grid: { color: grid },
             border: { color: grid },
@@ -104,7 +118,7 @@ class PowerChart extends HTMLElement {
           },
           tooltip: {
             callbacks: {
-              label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} W`,
+              label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)} ${this._src.unit}`,
             },
           },
         },

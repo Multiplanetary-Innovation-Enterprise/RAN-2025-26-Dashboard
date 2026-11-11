@@ -158,12 +158,19 @@ Behavior rules
             "torque_current":1.2,"temp":31.0,"proc_temp":40.0,
             "supply_current":1.4,"supply_voltage":24.1,   // A, V
             "power_w":33.7,          // supply_voltage * supply_current
+            "motor_voltage":8.5,     // V, applied to the windings (signed)
+            "mech_power_w":24.0,     // Kt * torque_current * rotor speed
+            "efficiency":0.78,       // 0..1 motor efficiency; null idle/regen
+            "steer_measured":0.21,   // rad, ESP32 feedback only; null if stale
             "steer":0.21,            // rad, CCW+; uros feedback or command
             "cmd_steer":0.22},       // rad, from rover_kinematics
       ...
     },
     "steer_source":"feedback",       // "feedback" | "command" | "none"
     "total_power_w":134.8,           // sum of per-wheel power_w
+    "total_mech_power_w":96.0,       // sum of per-wheel mech_power_w
+    "drive_energy_wh":12.34,         // net Wh since the Pi service started
+    "energy_epoch":1794400000.0,     // changes when that counter restarts
     "age_sec":0.02
   },
 
@@ -181,6 +188,8 @@ Behavior rules
     "available":true,                // false + "error" if vcgencmd is missing/fails
     "power_w":4.21,                  // sum of V * I over the PMIC rails
     "input_v":5.12,                  // EXT5V input voltage
+    "energy_wh":0.85,                // Wh since the Pi service started
+    "energy_epoch":1794400000.0,     // changes when that counter restarts
     "age_s":0.3
   }
 }

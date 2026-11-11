@@ -7,6 +7,8 @@
     HTTP is used only for WebRTC SDP signaling. There is no WebSocket transport.
 */
 
+import { recordFrame } from "./recorder.js";
+
 const BROWSER_OFFER_PATH = "/api/webrtc/browser/offer";
 const PROTOCOL_VERSION = "0.3";
 
@@ -373,6 +375,7 @@ function handleServerMessage(m) {
 //   mux, net, estop, faults, wheel_state, drive_mode, wifi, pi_power
 function handleTelemetry(m) {
   lastTlmAt = performance.now();
+  recordFrame(m);   // no-op unless the CSV recorder is running
   if (m.wifi) onWifiSample(m.wifi);
   if (m.mux) setText("#owner", m.mux);
   if (typeof m.estop === "boolean") renderEstop(m.estop);
@@ -407,10 +410,22 @@ function handlePower(m) {
   const wheels = ws?.wheel_state;
   const totalPowerW = ws?.total_power_w;
   let motors = null;
+  let efficiency = null;
 
   if (wheels && typeof totalPowerW === "number") {
     motors = Object.fromEntries(MOTORS.map(w => [w, Number(wheels[w]?.power_w) || 0]));
+    // Motor efficiency 0..1 -> %, null (chart gap) while idle or regenerating
+    efficiency = Object.fromEntries(MOTORS.map(w => {
+      const e = wheels[w]?.efficiency;
+      return [w, typeof e === "number" ? e * 100 : null];
+    }));
     setText("#drive-power", `${totalPowerW.toFixed(0)} W`);
+
+    // Battery-to-rotor efficiency of the whole drivetrain
+    const mech = ws.total_mech_power_w;
+    setText("#drive-efficiency",
+      typeof mech === "number" && totalPowerW >= 4 && mech > 0
+        ? `${Math.min(mech / totalPowerW * 100, 100).toFixed(0)} %` : "—");
 
     // All Krakens share one bus; average the ones reporting a voltage.
     const volts = MOTORS.map(w => Number(wheels[w]?.supply_voltage) || 0).filter(v => v > 0);
@@ -429,7 +444,7 @@ function handlePower(m) {
   }
 
   if (motors || typeof piW === "number") {
-    window.dispatchEvent(new CustomEvent("power", { detail: { motors, pi_w: piW } }));
+    window.dispatchEvent(new CustomEvent("power", { detail: { motors, efficiency, pi_w: piW } }));
   }
 }
 
