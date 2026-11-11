@@ -203,6 +203,79 @@ estop-panel .stat-list { display: grid; grid-template-columns: 1fr 1fr; }
 .alert-error { color: var(--danger); font-weight: 600; }
 
 /* ------------------------------------------------------------
+   Page menu (hamburger, right end of the connection bar)
+   ------------------------------------------------------------ */
+page-menu { position: relative; flex: none; }
+
+.menu-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.7rem;
+}
+.menu-current { color: var(--text-muted); }
+.menu-icon { display: block; }
+
+.menu-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: 0.3rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.menu-list[hidden] { display: none; }
+
+.menu-list a {
+  padding: 0.5rem 0.7rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  text-decoration: none;
+  border-radius: 5px;
+}
+.menu-list a:hover { background: var(--surface-3); }
+.menu-list a:focus-visible { outline: none; box-shadow: 0 0 0 1px var(--accent); }
+.menu-list a[aria-current="page"] { color: var(--accent-bright); background: var(--accent-dim); }
+
+/* ------------------------------------------------------------
+   Diagnostics page
+   ------------------------------------------------------------ */
+.diag-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  padding: 0.75rem;
+}
+
+.diag-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0 0.75rem 0.75rem;
+}
+
+.power-chart-wrap {
+  position: relative;
+  height: 240px;
+  padding: 0.5rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 900px) {
+  .diag-summary { grid-template-columns: repeat(2, 1fr); }
+  .diag-charts { grid-template-columns: 1fr; }
+  .wheel-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ------------------------------------------------------------
    Controls
    ------------------------------------------------------------ */
 button {

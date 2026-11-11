@@ -8,48 +8,62 @@
   <body>
     <connection-bar></connection-bar>
 
-    <div class="dashboard-layout">
-      <!-- Everything in .top-row must fit on screen without scrolling -->
-      <section class="top-row">
-        <video-panel></video-panel>
-        <div class="side-stack">
-          <estop-panel></estop-panel>
-          <div class="mini-row">
-            <rover-visual-panel></rover-visual-panel>
-            <arena-panel></arena-panel>
+    <div class="page" data-page="driver">
+      <div class="dashboard-layout">
+        <section class="top-row">
+          <video-panel></video-panel>
+          <div class="side-stack">
+            <estop-panel></estop-panel>
+            <div class="mini-row">
+              <rover-visual-panel></rover-visual-panel>
+              <arena-panel></arena-panel>
+            </div>
           </div>
-        </div>
+        </section>
+
+        <main class="bottom-row">
+          <bandwidth-panel></bandwidth-panel>
+        </main>
+      </div>
+
+      <controller-panel></controller-panel>
+    </div>
+
+    <div class="page" data-page="diagnostics" hidden>
+      <section class="diag-summary">
+        <div class="stat"><span class="stat-label">Drivetrain power</span><span id="drive-power">—</span></div>
+        <div class="stat"><span class="stat-label">Drive bus voltage</span><span id="drive-bus-voltage">—</span></div>
+        <div class="stat"><span class="stat-label">Pi power</span><span id="pi-power">—</span></div>
+        <div class="stat"><span class="stat-label">Pi input voltage</span><span id="pi-input-voltage">—</span></div>
       </section>
 
-      <main class="bottom-row">
-        <bandwidth-panel></bandwidth-panel>
-      </main>
+      <section class="diag-charts">
+        <power-chart source="motors"></power-chart>
+        <power-chart source="pi"></power-chart>
+      </section>
+
+      <div class="wheel-row">
+        <wheel-card wheel="fl" label="Front Left"></wheel-card>
+        <wheel-card wheel="fr" label="Front Right"></wheel-card>
+        <wheel-card wheel="rl" label="Rear Left"></wheel-card>
+        <wheel-card wheel="rr" label="Rear Right"></wheel-card>
+      </div>
+
+      <div class="faults-panel">
+        <h3>Kraken Fault Lookup</h3>
+        <table class="fault-table">
+          <thead>
+            <tr>
+              <th>Motor</th>
+              <th>Fault</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="fault_table_body"></tbody>
+        </table>
+      </div>
     </div>
 
-    <div class="wheel-row">
-      <wheel-card wheel="fl" label="Front Left"></wheel-card>
-      <wheel-card wheel="fr" label="Front Right"></wheel-card>
-      <wheel-card wheel="rl" label="Rear Left"></wheel-card>
-      <wheel-card wheel="rr" label="Rear Right"></wheel-card>
-    </div>
-
-    <div class="faults-panel">
-      <h3>Kraken Fault Lookup</h3>
-      <table class="fault-table">
-        <thead>
-          <tr>
-            <th>Motor</th>
-            <th>Fault</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="fault_table_body"></tbody>
-      </table>
-    </div>
-
-    <controller-panel></controller-panel>
-
-    <!-- Chart.js must be a classic script: bandwidth-panel.js uses the global Chart -->
     <script src="components/chart.js"></script>
     <script type="module" src="main.js"></script>
   </body>

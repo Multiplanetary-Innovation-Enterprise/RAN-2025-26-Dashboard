@@ -23,6 +23,7 @@ class ConnectionBar extends HTMLElement {
           <span class="link-detail">—</span>
         </span>
         <span id="alertMsg"></span>
+        <page-menu></page-menu>
       </header>
     `;
 

@@ -370,7 +370,7 @@ function handleServerMessage(m) {
 }
 
 // Telemetry frame fields (see wire_protocol.txt):
-//   mux, net, estop, faults, wheel_state, drive_mode, wifi
+//   mux, net, estop, faults, wheel_state, drive_mode, wifi, pi_power
 function handleTelemetry(m) {
   lastTlmAt = performance.now();
   if (m.wifi) onWifiSample(m.wifi);
@@ -391,10 +391,46 @@ function handleTelemetry(m) {
     $("rover-visual-panel")?.update?.(wheels, m.wheel_state.steer_source);
   }
 
+  handlePower(m);
+
   const mode = m.drive_mode?.drive_mode ?? m.drive_mode;
   if (typeof mode === "string") setText("#drive-mode-value", mode);
 
   if (m.net) handleNetStats(m.net);
+}
+
+// Power stats on the Diagnostics page, plus the "power" event for power-chart.js.
+// Drivetrain power = sum of supply V * I over the drive Krakens (computed on the Pi);
+// Pi power comes from the Pi 5 PMIC (tlm.pi_power).
+function handlePower(m) {
+  const ws = m.wheel_state;
+  const wheels = ws?.wheel_state;
+  const totalPowerW = ws?.total_power_w;
+  let motors = null;
+
+  if (wheels && typeof totalPowerW === "number") {
+    motors = Object.fromEntries(MOTORS.map(w => [w, Number(wheels[w]?.power_w) || 0]));
+    setText("#drive-power", `${totalPowerW.toFixed(0)} W`);
+
+    // All Krakens share one bus; average the ones reporting a voltage.
+    const volts = MOTORS.map(w => Number(wheels[w]?.supply_voltage) || 0).filter(v => v > 0);
+    setText("#drive-bus-voltage",
+      volts.length ? `${(volts.reduce((a, v) => a + v, 0) / volts.length).toFixed(1)} V` : "—");
+  }
+
+  const pi = m.pi_power;
+  const piW = pi?.available ? pi.power_w : null;
+  if (pi) {
+    setText("#pi-power", typeof piW === "number" ? `${piW.toFixed(2)} W` : "unavailable");
+    setText("#pi-input-voltage",
+      pi.available && typeof pi.input_v === "number" ? `${pi.input_v.toFixed(2)} V` : "—");
+    const piPower = $("#pi-power");
+    if (piPower) piPower.title = pi.error ?? "";
+  }
+
+  if (motors || typeof piW === "number") {
+    window.dispatchEvent(new CustomEvent("power", { detail: { motors, pi_w: piW } }));
+  }
 }
 
 function handleNetStats(net) {

@@ -156,11 +156,14 @@ Behavior rules
     "wheel_state":{                  // per wheel fl/fr/rl/rr
       "fl":{"measured_rps":0.31,"commanded_rps":0.32,"current":3.1,
             "torque_current":1.2,"temp":31.0,"proc_temp":40.0,
+            "supply_current":1.4,"supply_voltage":24.1,   // A, V
+            "power_w":33.7,          // supply_voltage * supply_current
             "steer":0.21,            // rad, CCW+; uros feedback or command
             "cmd_steer":0.22},       // rad, from rover_kinematics
       ...
     },
     "steer_source":"feedback",       // "feedback" | "command" | "none"
+    "total_power_w":134.8,           // sum of per-wheel power_w
     "age_sec":0.02
   },
 
@@ -172,6 +175,13 @@ Behavior rules
     "ssid":"RAN","freq_mhz":5180.0,       // ssid, freq, and rates only
     "rx_mbps":390.0,"tx_mbps":433.3,      //   if `iw` is installed
     "age_s":0.4
+  },
+
+  "pi_power":{                       // Pi 5 PMIC (vcgencmd pmic_read_adc), 1 Hz
+    "available":true,                // false + "error" if vcgencmd is missing/fails
+    "power_w":4.21,                  // sum of V * I over the PMIC rails
+    "input_v":5.12,                  // EXT5V input voltage
+    "age_s":0.3
   }
 }
 
