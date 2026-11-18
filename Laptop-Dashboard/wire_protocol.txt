@@ -156,11 +156,21 @@ Behavior rules
     "wheel_state":{                  // per wheel fl/fr/rl/rr
       "fl":{"measured_rps":0.31,"commanded_rps":0.32,"current":3.1,
             "torque_current":1.2,"temp":31.0,"proc_temp":40.0,
+            "supply_current":1.4,"supply_voltage":24.1,   // A, V
+            "power_w":33.7,          // supply_voltage * supply_current
+            "motor_voltage":8.5,     // V, applied to the windings (signed)
+            "mech_power_w":24.0,     // Kt * torque_current * rotor speed
+            "efficiency":0.78,       // 0..1 motor efficiency; null idle/regen
+            "steer_measured":0.21,   // rad, ESP32 feedback only; null if stale
             "steer":0.21,            // rad, CCW+; uros feedback or command
             "cmd_steer":0.22},       // rad, from rover_kinematics
       ...
     },
     "steer_source":"feedback",       // "feedback" | "command" | "none"
+    "total_power_w":134.8,           // sum of per-wheel power_w
+    "total_mech_power_w":96.0,       // sum of per-wheel mech_power_w
+    "drive_energy_wh":12.34,         // net Wh since the Pi service started
+    "energy_epoch":1794400000.0,     // changes when that counter restarts
     "age_sec":0.02
   },
 
@@ -172,6 +182,16 @@ Behavior rules
     "ssid":"RAN","freq_mhz":5180.0,       // ssid, freq, and rates only
     "rx_mbps":390.0,"tx_mbps":433.3,      //   if `iw` is installed
     "age_s":0.4
+  },
+
+  "jetson_power":{                   // Jetson INA3221 via /sys/class/hwmon, 1 Hz
+    "available":true,                // false + "error" if no ina3221 hwmon device
+    "power_w":7.84,                  // VDD_IN (Orin Nano/NX), else sum of rails (AGX)
+    "input_v":5.08,                  // VDD_IN bus voltage; omitted if no VDD_IN rail
+    "rails_w":{"VDD_IN":7.84,"VDD_CPU_GPU_CV":2.10,"VDD_SOC":1.62},
+    "energy_wh":0.85,                // Wh since the Jetson service started
+    "energy_epoch":1794400000.0,     // changes when that counter restarts
+    "age_s":0.3
   }
 }
 

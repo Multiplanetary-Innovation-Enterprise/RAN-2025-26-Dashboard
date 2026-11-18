@@ -7,6 +7,8 @@
     HTTP is used only for WebRTC SDP signaling. There is no WebSocket transport.
 */
 
+import { recordFrame } from "./recorder.js";
+
 const BROWSER_OFFER_PATH = "/api/webrtc/browser/offer";
 const PROTOCOL_VERSION = "0.3";
 
@@ -370,9 +372,10 @@ function handleServerMessage(m) {
 }
 
 // Telemetry frame fields (see wire_protocol.txt):
-//   mux, net, estop, faults, wheel_state, drive_mode, wifi
+//   mux, net, estop, faults, wheel_state, drive_mode, wifi, jetson_power
 function handleTelemetry(m) {
   lastTlmAt = performance.now();
+  recordFrame(m);   // no-op unless the CSV recorder is running
   if (m.wifi) onWifiSample(m.wifi);
   if (m.mux) setText("#owner", m.mux);
   if (typeof m.estop === "boolean") renderEstop(m.estop);
@@ -391,10 +394,64 @@ function handleTelemetry(m) {
     $("rover-visual-panel")?.update?.(wheels, m.wheel_state.steer_source);
   }
 
+  handlePower(m);
+
   const mode = m.drive_mode?.drive_mode ?? m.drive_mode;
   if (typeof mode === "string") setText("#drive-mode-value", mode);
 
   if (m.net) handleNetStats(m.net);
+}
+
+// Power stats on the Diagnostics page, plus the "power" event for power-chart.js.
+// Drivetrain power = sum of supply V * I over the drive Krakens (computed on the rover);
+// Jetson power comes from its INA3221 power monitor (tlm.jetson_power).
+function handlePower(m) {
+  const ws = m.wheel_state;
+  const wheels = ws?.wheel_state;
+  const totalPowerW = ws?.total_power_w;
+  let motors = null;
+  let efficiency = null;
+
+  if (wheels && typeof totalPowerW === "number") {
+    motors = Object.fromEntries(MOTORS.map(w => [w, Number(wheels[w]?.power_w) || 0]));
+    // Motor efficiency 0..1 -> %, null (chart gap) while idle or regenerating
+    efficiency = Object.fromEntries(MOTORS.map(w => {
+      const e = wheels[w]?.efficiency;
+      return [w, typeof e === "number" ? e * 100 : null];
+    }));
+    setText("#drive-power", `${totalPowerW.toFixed(0)} W`);
+
+    // Battery-to-rotor efficiency of the whole drivetrain
+    const mech = ws.total_mech_power_w;
+    setText("#drive-efficiency",
+      typeof mech === "number" && totalPowerW >= 4 && mech > 0
+        ? `${Math.min(mech / totalPowerW * 100, 100).toFixed(0)} %` : "—");
+
+    // All Krakens share one bus; average the ones reporting a voltage.
+    const volts = MOTORS.map(w => Number(wheels[w]?.supply_voltage) || 0).filter(v => v > 0);
+    setText("#drive-bus-voltage",
+      volts.length ? `${(volts.reduce((a, v) => a + v, 0) / volts.length).toFixed(1)} V` : "—");
+  }
+
+  const jetson = m.jetson_power;
+  const jetsonW = jetson?.available ? jetson.power_w : null;
+  if (jetson) {
+    setText("#jetson-power", typeof jetsonW === "number" ? `${jetsonW.toFixed(2)} W` : "unavailable");
+    // input_v is only reported on boards with a VDD_IN rail (Orin Nano / NX)
+    setText("#jetson-input-voltage",
+      jetson.available && typeof jetson.input_v === "number" ? `${jetson.input_v.toFixed(2)} V` : "—");
+    const jetsonPower = $("#jetson-power");
+    if (jetsonPower) {
+      // Hover shows the per-rail breakdown, or the error when unavailable
+      const rails = jetson.rails_w && Object.entries(jetson.rails_w)
+        .map(([name, w]) => `${name}: ${Number(w).toFixed(2)} W`).join("\n");
+      jetsonPower.title = jetson.error ?? rails ?? "";
+    }
+  }
+
+  if (motors || typeof jetsonW === "number") {
+    window.dispatchEvent(new CustomEvent("power", { detail: { motors, efficiency, jetson_w: jetsonW } }));
+  }
 }
 
 function handleNetStats(net) {

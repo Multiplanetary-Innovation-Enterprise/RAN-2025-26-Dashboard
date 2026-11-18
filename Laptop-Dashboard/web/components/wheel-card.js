@@ -1,7 +1,7 @@
 // components/wheel-card.js
 // Per-wheel Kraken telemetry. Usage: <wheel-card label="Front Left"></wheel-card>
 
-const FIELDS = ["rps", "cmd", "steer", "current", "temp", "fault"];
+const FIELDS = ["rps", "cmd", "steer", "current", "supply", "power", "temp", "fault"];
 
 class WheelCard extends HTMLElement {
   connectedCallback() {
@@ -16,7 +16,9 @@ class WheelCard extends HTMLElement {
         <div class="stat"><span class="stat-label">RPS</span><span data-f="rps">—</span></div>
         <div class="stat"><span class="stat-label">Cmd</span><span data-f="cmd">—</span></div>
         <div class="stat"><span class="stat-label">Steer</span><span data-f="steer">—</span></div>
-        <div class="stat"><span class="stat-label">Current</span><span data-f="current">—</span></div>
+        <div class="stat"><span class="stat-label">Stator</span><span data-f="current">—</span></div>
+        <div class="stat"><span class="stat-label">Supply</span><span data-f="supply">—</span></div>
+        <div class="stat"><span class="stat-label">Power</span><span data-f="power">—</span></div>
         <div class="stat"><span class="stat-label">Temp</span><span data-f="temp">—</span></div>
         <div class="stat"><span class="stat-label">Status</span><span data-f="fault">—</span></div>
       </div>
@@ -36,6 +38,8 @@ class WheelCard extends HTMLElement {
     this._el.cmd.textContent = fmt(data.commanded_rps, 2);
     this._el.steer.textContent = `${fmt((Number(data.steer) || 0) * 180 / Math.PI, 1)}°`;
     this._el.current.textContent = `${fmt(data.current, 1)} A`;
+    this._el.supply.textContent = `${fmt(data.supply_current, 1)} A`;
+    this._el.power.textContent = `${fmt(data.power_w, 0)} W`;
     this._el.temp.textContent = `${fmt(data.temp, 1)} °C`;
 
     const fault = this._el.fault;
