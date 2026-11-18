@@ -372,7 +372,7 @@ function handleServerMessage(m) {
 }
 
 // Telemetry frame fields (see wire_protocol.txt):
-//   mux, net, estop, faults, wheel_state, drive_mode, wifi, pi_power
+//   mux, net, estop, faults, wheel_state, drive_mode, wifi, jetson_power
 function handleTelemetry(m) {
   lastTlmAt = performance.now();
   recordFrame(m);   // no-op unless the CSV recorder is running
@@ -403,8 +403,8 @@ function handleTelemetry(m) {
 }
 
 // Power stats on the Diagnostics page, plus the "power" event for power-chart.js.
-// Drivetrain power = sum of supply V * I over the drive Krakens (computed on the Pi);
-// Pi power comes from the Pi 5 PMIC (tlm.pi_power).
+// Drivetrain power = sum of supply V * I over the drive Krakens (computed on the rover);
+// Jetson power comes from its INA3221 power monitor (tlm.jetson_power).
 function handlePower(m) {
   const ws = m.wheel_state;
   const wheels = ws?.wheel_state;
@@ -433,18 +433,24 @@ function handlePower(m) {
       volts.length ? `${(volts.reduce((a, v) => a + v, 0) / volts.length).toFixed(1)} V` : "—");
   }
 
-  const pi = m.pi_power;
-  const piW = pi?.available ? pi.power_w : null;
-  if (pi) {
-    setText("#pi-power", typeof piW === "number" ? `${piW.toFixed(2)} W` : "unavailable");
-    setText("#pi-input-voltage",
-      pi.available && typeof pi.input_v === "number" ? `${pi.input_v.toFixed(2)} V` : "—");
-    const piPower = $("#pi-power");
-    if (piPower) piPower.title = pi.error ?? "";
+  const jetson = m.jetson_power;
+  const jetsonW = jetson?.available ? jetson.power_w : null;
+  if (jetson) {
+    setText("#jetson-power", typeof jetsonW === "number" ? `${jetsonW.toFixed(2)} W` : "unavailable");
+    // input_v is only reported on boards with a VDD_IN rail (Orin Nano / NX)
+    setText("#jetson-input-voltage",
+      jetson.available && typeof jetson.input_v === "number" ? `${jetson.input_v.toFixed(2)} V` : "—");
+    const jetsonPower = $("#jetson-power");
+    if (jetsonPower) {
+      // Hover shows the per-rail breakdown, or the error when unavailable
+      const rails = jetson.rails_w && Object.entries(jetson.rails_w)
+        .map(([name, w]) => `${name}: ${Number(w).toFixed(2)} W`).join("\n");
+      jetsonPower.title = jetson.error ?? rails ?? "";
+    }
   }
 
-  if (motors || typeof piW === "number") {
-    window.dispatchEvent(new CustomEvent("power", { detail: { motors, efficiency, pi_w: piW } }));
+  if (motors || typeof jetsonW === "number") {
+    window.dispatchEvent(new CustomEvent("power", { detail: { motors, efficiency, jetson_w: jetsonW } }));
   }
 }
 

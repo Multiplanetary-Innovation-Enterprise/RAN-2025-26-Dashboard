@@ -184,11 +184,12 @@ Behavior rules
     "age_s":0.4
   },
 
-  "pi_power":{                       // Pi 5 PMIC (vcgencmd pmic_read_adc), 1 Hz
-    "available":true,                // false + "error" if vcgencmd is missing/fails
-    "power_w":4.21,                  // sum of V * I over the PMIC rails
-    "input_v":5.12,                  // EXT5V input voltage
-    "energy_wh":0.85,                // Wh since the Pi service started
+  "jetson_power":{                   // Jetson INA3221 via /sys/class/hwmon, 1 Hz
+    "available":true,                // false + "error" if no ina3221 hwmon device
+    "power_w":7.84,                  // VDD_IN (Orin Nano/NX), else sum of rails (AGX)
+    "input_v":5.08,                  // VDD_IN bus voltage; omitted if no VDD_IN rail
+    "rails_w":{"VDD_IN":7.84,"VDD_CPU_GPU_CV":2.10,"VDD_SOC":1.62},
+    "energy_wh":0.85,                // Wh since the Jetson service started
     "energy_epoch":1794400000.0,     // changes when that counter restarts
     "age_s":0.3
   }

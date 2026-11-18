@@ -2,7 +2,7 @@
 // Rolling power line chart fed by the "power" window event from app.js.
 //   <power-chart source="motors"></power-chart>      power per drive Kraken
 //   <power-chart source="efficiency"></power-chart>  efficiency per drive Kraken
-//   <power-chart source="pi"></power-chart>          Raspberry Pi board power
+//   <power-chart source="jetson"></power-chart>      Jetson board power
 // Uses the global Chart (components/chart.js).
 
 const WINDOW_S = 30;
@@ -34,13 +34,13 @@ const SOURCES = {
     min: 0,
     max: 100,
   },
-  pi: {
-    title: "Raspberry Pi Power (W)",
-    hint: "Pi 5 PMIC rails, sampled at 1 Hz. Excludes USB devices and HATs powered through the Pi.",
-    series: [{ key: "pi", label: "Raspberry Pi", color: null }],  // null = theme accent
-    read: d => (typeof d.pi_w === "number" ? [d.pi_w] : null),
+  jetson: {
+    title: "Jetson Power (W)",
+    hint: "Jetson INA3221 power monitor (VDD_IN module input, or the sum of rails on AGX Orin), sampled at 1 Hz. Excludes carrier-board peripherals.",
+    series: [{ key: "jetson", label: "Jetson", color: null }],  // null = theme accent
+    read: d => (typeof d.jetson_w === "number" ? [d.jetson_w] : null),
     unit: "W",
-    suggestedMax: 10,
+    suggestedMax: 20,
     stepped: true,
   },
 };

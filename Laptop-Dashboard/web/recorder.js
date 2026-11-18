@@ -29,10 +29,10 @@ const HEADER = [
   "drive_mode", "estop",
   "drive_power_w", "drive_mech_power_w", "drive_system_efficiency_pct",
   "drive_bus_voltage_v", "drive_energy_wh",
-  "pi_power_w", "pi_input_v", "pi_energy_wh",
+  "jetson_power_w", "jetson_input_v", "jetson_energy_wh",
   "rover_power_w", "rover_energy_wh",
   ...WHEELS.flatMap(w => WHEEL_COLUMNS.map(([name]) => `${w}_${name}`)),
-  "wheel_state_age_s", "pi_power_age_s",
+  "wheel_state_age_s", "jetson_power_age_s",
 ];
 
 // Drivetrain battery-to-rotor efficiency is undefined below this input.
@@ -44,7 +44,7 @@ let startedAt = null;       // performance.now()
 let firstPiMs = null;
 let lastPiMs = null;
 let driveEnergy = null;     // energy counters relative to the recording start
-let piEnergy = null;
+let jetsonEnergy = null;
 
 // --------------------------------------------------------------------------
 // Public API
@@ -61,7 +61,7 @@ export function startRecording() {
   startedAt = performance.now();
   firstPiMs = lastPiMs = null;
   driveEnergy = energyCounter();
-  piEnergy = energyCounter();
+  jetsonEnergy = energyCounter();
   emit();
 }
 
@@ -99,12 +99,12 @@ export function recordFrame(m) {
 
   const ws = m.wheel_state ?? {};
   const wheels = ws.wheel_state ?? {};
-  const pi = m.pi_power ?? {};
-  const piOk = pi.available === true;
+  const jetson = m.jetson_power ?? {};
+  const jetsonOk = jetson.available === true;
 
   const drivePower = num(ws.total_power_w);
   const driveMech = num(ws.total_mech_power_w);
-  const piPower = piOk ? num(pi.power_w) : null;
+  const jetsonPower = jetsonOk ? num(jetson.power_w) : null;
 
   const busVolts = WHEELS.map(w => num(wheels[w]?.supply_voltage)).filter(v => v > 0);
   const busV = busVolts.length ? busVolts.reduce((a, v) => a + v, 0) / busVolts.length : null;
@@ -116,7 +116,7 @@ export function recordFrame(m) {
       : null;
 
   const driveWh = driveEnergy.update(num(ws.drive_energy_wh), ws.energy_epoch);
-  const piWh = piEnergy.update(num(pi.energy_wh), pi.energy_epoch);
+  const jetsonWh = jetsonEnergy.update(num(jetson.energy_wh), jetson.energy_epoch);
 
   const row = [
     new Date().toISOString(),
@@ -130,15 +130,15 @@ export function recordFrame(m) {
     fmt(systemEff, 1),
     fmt(busV, 3),
     fmt(driveWh, 5),
-    fmt(piPower, 3),
-    fmt(piOk ? num(pi.input_v) : null, 3),
-    fmt(piWh, 5),
-    fmt(drivePower !== null && piPower !== null ? drivePower + piPower : null, 2),
-    fmt(driveWh !== null && piWh !== null ? driveWh + piWh : null, 5),
+    fmt(jetsonPower, 3),
+    fmt(jetsonOk ? num(jetson.input_v) : null, 3),
+    fmt(jetsonWh, 5),
+    fmt(drivePower !== null && jetsonPower !== null ? drivePower + jetsonPower : null, 2),
+    fmt(driveWh !== null && jetsonWh !== null ? driveWh + jetsonWh : null, 5),
     ...WHEELS.flatMap(w =>
       WHEEL_COLUMNS.map(([, get, digits]) => fmt(wheels[w] ? get(wheels[w]) : null, digits))),
     fmt(num(ws.age_sec), 3),
-    fmt(num(pi.age_s), 2),
+    fmt(num(jetson.age_s), 2),
   ];
 
   rows.push(row.join(","));
@@ -148,7 +148,7 @@ export function recordFrame(m) {
 // Helpers
 // --------------------------------------------------------------------------
 
-// Pi-side energy counters run since the Pi service started. This tracks the
+// Rover-side energy counters run since the rover service started. This tracks the
 // change since recording began. Net drive energy legitimately falls during
 // regen, so a counter restart is detected by its epoch changing, not by a drop.
 function energyCounter() {
