@@ -101,8 +101,9 @@ The browser uses the same laptop origin for:
 ## Video
 
 The video panel pulls two H.264 streams straight from MediaMTX on the Pi over
-WHEP (`http://<pi-ip>:8889/rover_video_{1,2}/whep`). Set the Pi address in
-`web/components/video-panel.js`.
+WHEP (`http://<pi-ip>:8889/rover_video_{1,2}/whep`). The default rover address is
+set in `web/components/video-panel.js`. To use another address without editing the
+code, open the dashboard with `?videoHost=<rover-ip>`.
 
 ## E-stop
 
